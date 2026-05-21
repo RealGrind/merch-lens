@@ -1,0 +1,27 @@
+# Gradle
+.gradle/
+build/
+
+# IntelliJ / IDE local state
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# VS Code local state
+.vscode/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Logs and local diagnostics
+*.log
+hs_err_pid*
+replay_pid*
+
+# Local project notes should not be published with the plugin repo.
+PROJECT_NOTES.md

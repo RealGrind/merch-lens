@@ -1,0 +1,35 @@
+plugins {
+    id "java"
+}
+
+group = "com.merchlens"
+version = "0.1.0"
+
+layout.buildDirectory = file("${gradle.gradleUserHomeDir}/project-builds/${rootProject.name}")
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
+}
+
+dependencies {
+    compileOnly "net.runelite:client:1.12.26.3"
+    compileOnly "org.projectlombok:lombok:1.18.32"
+    annotationProcessor "org.projectlombok:lombok:1.18.32"
+
+    testImplementation files(tasks.jar)
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "net.runelite:client:1.12.26.3"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+}
+
+tasks.register("runPlugin", JavaExec) {
+    group = "runelite"
+    description = "Launches RuneLite with the Merch Lens external plugin loaded."
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = "com.merchlens.MerchLensPluginTest"
+    enableAssertions = true
+}
