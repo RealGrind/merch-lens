@@ -53,7 +53,6 @@ public class WikiMarketClient
 	private static final int HISTORY_WARM_REQUEST_LIMIT = 18;
 	private static final int HISTORY_VISIBLE_WARM_REQUEST_LIMIT = 18;
 	private static final int HISTORY_WARM_CONCURRENCY = 6;
-	private static final int HISTORY_WARM_TIMEOUT_SECONDS = 18;
 	private static final long TIMESERIES_CACHE_SECONDS = 5 * 60L;
 
 	private final OkHttpClient okHttpClient;
@@ -390,7 +389,7 @@ public class WikiMarketClient
 				tasks.add(() -> fetchHistoricalSignal(itemId, recommendation));
 				taskItemIds.add(itemId);
 			}
-			List<Future<HistoryResult>> futures = executor.invokeAll(tasks, HISTORY_WARM_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+			List<Future<HistoryResult>> futures = executor.invokeAll(tasks);
 			for (int i = 0; i < futures.size(); i++)
 			{
 				Future<HistoryResult> future = futures.get(i);
@@ -420,12 +419,11 @@ public class WikiMarketClient
 		}
 		catch (InterruptedException ex)
 		{
-			Thread.currentThread().interrupt();
-			throw new IOException("Interrupted while warming trend data", ex);
+			throw new IOException("Unable to finish trend data warmup", ex);
 		}
 		finally
 		{
-			executor.shutdownNow();
+			executor.shutdown();
 		}
 		return signals;
 	}
