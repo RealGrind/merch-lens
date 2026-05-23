@@ -7,8 +7,10 @@ import com.merchlens.model.ItemSearchResult;
 import com.merchlens.model.SignalResponse;
 import com.merchlens.model.TimeseriesPoint;
 import com.merchlens.ui.MerchLensPanel;
+import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -17,6 +19,9 @@ import java.util.List;
 import java.util.Set;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Client;
+import net.runelite.api.GameState;
+import net.runelite.api.GrandExchangeOfferState;
 import net.runelite.api.events.GrandExchangeOfferChanged;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
@@ -26,6 +31,7 @@ import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.ui.overlay.OverlayManager;
+import net.runelite.client.ui.overlay.tooltip.TooltipManager;
 
 @Slf4j
 @PluginDescriptor(
@@ -37,6 +43,9 @@ public class MerchLensPlugin extends Plugin
 {
 	@Inject
 	private ClientToolbar clientToolbar;
+
+	@Inject
+	private Client client;
 
 	@Inject
 	private MerchLensConfig config;
@@ -56,13 +65,16 @@ public class MerchLensPlugin extends Plugin
 	@Inject
 	private OverlayManager overlayManager;
 
+	@Inject
+	private TooltipManager tooltipManager;
+
 	private OfferTracker offerTracker;
 	private GeOfferOverlay geOfferOverlay;
-	private FlipHistoryStore flipHistoryStore;
 	private FavoriteItemStore favoriteItemStore;
 	private MerchLensPanel panel;
 	private NavigationButton navigationButton;
 	private volatile long refreshSequence;
+	private volatile long chartSequence;
 	private final Set<Integer> visibleTrendWarmInFlight = Collections.synchronizedSet(new HashSet<>());
 
 	@Provides
@@ -76,18 +88,15 @@ public class MerchLensPlugin extends Plugin
 	{
 		offerTracker = new OfferTracker(configManager, gson);
 		offerTracker.load();
-		geOfferOverlay = new GeOfferOverlay(offerTracker, itemManager);
+		geOfferOverlay = new GeOfferOverlay(offerTracker, itemManager, config, client, tooltipManager);
 		overlayManager.add(geOfferOverlay);
-		flipHistoryStore = new FlipHistoryStore(configManager, gson);
-		flipHistoryStore.load();
 		favoriteItemStore = new FavoriteItemStore(configManager, gson);
 		favoriteItemStore.load();
 		panel = new MerchLensPanel(
 			this::refreshRecommendations,
-			this::excludeFlip,
 			this::searchItem,
 			this::toggleFavorite,
-			this::showDailyChart,
+			this::showChart,
 			this::warmVisibleTrendSignals,
 			this::updateBankSize,
 			config.budget(),
@@ -122,11 +131,6 @@ public class MerchLensPlugin extends Plugin
 		{
 			clientToolbar.removeNavigation(navigationButton);
 		}
-		if (offerTracker != null)
-		{
-			offerTracker.clear();
-		}
-		flipHistoryStore = null;
 		favoriteItemStore = null;
 		offerTracker = null;
 		geOfferOverlay = null;
@@ -145,12 +149,11 @@ public class MerchLensPlugin extends Plugin
 		{
 			return;
 		}
-		OfferSnapshot snapshot = offerTracker.record(event.getSlot(), event.getOffer());
-		FlipHistoryStore currentStore = flipHistoryStore;
-		if (currentStore != null)
+		if (event.getOffer().getState() == GrandExchangeOfferState.EMPTY && client.getGameState() != GameState.LOGGED_IN)
 		{
-			currentStore.record(snapshot);
+			return;
 		}
+		offerTracker.record(event.getSlot(), event.getOffer());
 	}
 
 	private void refreshRecommendations()
@@ -162,19 +165,18 @@ public class MerchLensPlugin extends Plugin
 		}
 
 		currentPanel.showLoading();
-		FlipHistoryStore currentStore = flipHistoryStore;
 		long sequence = ++refreshSequence;
 		// Network work stays off the client thread. The result is marshalled back through Swing in the panel.
 		Thread worker = new Thread(() -> {
 			try
 			{
-				SignalResponse response = loadSignals(currentStore);
+				SignalResponse response = loadSignals();
 				if (!isCurrentRefresh(sequence, currentPanel))
 				{
 					return;
 				}
 				currentPanel.showRecommendations(response);
-				warmHistoryAndRefresh(sequence, currentPanel, currentStore, response);
+				warmHistoryAndRefresh(sequence, currentPanel, response);
 			}
 			catch (Exception ex)
 			{
@@ -189,28 +191,15 @@ public class MerchLensPlugin extends Plugin
 		worker.start();
 	}
 
-	private SignalResponse loadSignals(FlipHistoryStore currentStore) throws Exception
+	private SignalResponse loadSignals() throws Exception
 	{
-		return currentStore == null
-			? wikiMarketClient.getMarketSignals(
-				config,
-				offerTracker == null ? java.util.Collections.emptyList() : offerTracker.recent(),
-				java.util.Collections.emptyList(),
-				favoriteItemStore == null ? java.util.Collections.emptySet() : favoriteItemStore.itemIds(),
-				new com.merchlens.model.FlipHistorySummary(0, 0, 0, 0, 0, 0),
-				java.util.Collections.emptyList()
-			)
-			: wikiMarketClient.getMarketSignals(
-				config,
-				offerTracker == null ? java.util.Collections.emptyList() : offerTracker.recent(),
-				currentStore.openFlips(),
-				favoriteItemStore == null ? java.util.Collections.emptySet() : favoriteItemStore.itemIds(),
-				currentStore.summary(),
-				currentStore.recentClosed()
-			);
+		return wikiMarketClient.getMarketSignals(
+			config,
+			favoriteItemStore == null ? java.util.Collections.emptySet() : favoriteItemStore.itemIds()
+		);
 	}
 
-	private void warmHistoryAndRefresh(long sequence, MerchLensPanel currentPanel, FlipHistoryStore currentStore, SignalResponse response)
+	private void warmHistoryAndRefresh(long sequence, MerchLensPanel currentPanel, SignalResponse response)
 	{
 		try
 		{
@@ -219,7 +208,7 @@ public class MerchLensPlugin extends Plugin
 			{
 				return;
 			}
-			SignalResponse refreshed = loadSignals(currentStore);
+			SignalResponse refreshed = loadSignals();
 			if (isCurrentRefresh(sequence, currentPanel))
 			{
 				currentPanel.showRecommendations(refreshed);
@@ -257,14 +246,13 @@ public class MerchLensPlugin extends Plugin
 		}
 
 		long sequence = refreshSequence;
-		FlipHistoryStore currentStore = flipHistoryStore;
 		Thread worker = new Thread(() -> {
 			try
 			{
 				int warmed = wikiMarketClient.warmHistoricalSignals(toWarm);
 				if (warmed > 0 && isCurrentRefresh(sequence, currentPanel))
 				{
-					currentPanel.showRecommendations(loadSignals(currentStore));
+					currentPanel.showRecommendations(loadSignals());
 				}
 			}
 			catch (Exception ex)
@@ -286,15 +274,6 @@ public class MerchLensPlugin extends Plugin
 	private boolean isCurrentRefresh(long sequence, MerchLensPanel currentPanel)
 	{
 		return sequence == refreshSequence && panel == currentPanel;
-	}
-
-	private void excludeFlip(String recordId)
-	{
-		FlipHistoryStore currentStore = flipHistoryStore;
-		if (currentStore != null)
-		{
-			currentStore.exclude(recordId);
-		}
 	}
 
 	private void toggleFavorite(int itemId)
@@ -356,32 +335,35 @@ public class MerchLensPlugin extends Plugin
 		worker.start();
 	}
 
-	private void showDailyChart(RecommendationDto recommendation)
+	private void showChart(RecommendationDto recommendation, MerchLensPanel.ChartPeriod period)
 	{
 		MerchLensPanel currentPanel = panel;
 		if (currentPanel == null || recommendation == null || recommendation.getItemId() <= 0)
 		{
 			return;
 		}
-		currentPanel.showDailyChartLoading(recommendation.getItemName());
+		long sequence = ++chartSequence;
+		currentPanel.showChartLoading(recommendation, period);
 		Thread worker = new Thread(() -> {
 			try
 			{
-				List<TimeseriesPoint> points = wikiMarketClient.dailyTimeseries(recommendation.getItemId());
-				if (panel == currentPanel)
+				List<TimeseriesPoint> points = period == MerchLensPanel.ChartPeriod.WEEKLY
+					? wikiMarketClient.weeklyTimeseries(recommendation.getItemId())
+					: wikiMarketClient.dailyTimeseries(recommendation.getItemId());
+				if (panel == currentPanel && sequence == chartSequence)
 				{
-					currentPanel.showDailyChart(recommendation.getItemName(), points);
+					currentPanel.showChart(recommendation, period, points);
 				}
 			}
 			catch (Exception ex)
 			{
-				log.debug("Unable to load Merch Lens daily chart", ex);
-				if (panel == currentPanel)
+				log.debug("Unable to load Merch Lens {} chart", period.label().toLowerCase(), ex);
+				if (panel == currentPanel && sequence == chartSequence)
 				{
-					currentPanel.showDailyChartError(recommendation.getItemName(), ex.getMessage());
+					currentPanel.showChartError(recommendation, period, ex.getMessage());
 				}
 			}
-		}, "merch-lens-daily-chart");
+		}, "merch-lens-" + period.label().toLowerCase() + "-chart");
 		worker.setDaemon(true);
 		worker.start();
 	}
@@ -415,22 +397,25 @@ public class MerchLensPlugin extends Plugin
 	{
 		BufferedImage image = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
 		Graphics2D graphics = image.createGraphics();
-		graphics.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
-		graphics.setColor(new Color(32, 30, 25));
-		graphics.fillRoundRect(0, 0, 16, 16, 4, 4);
-		graphics.setColor(new Color(124, 82, 16));
-		graphics.fillOval(3, 9, 10, 4);
-		graphics.fillOval(3, 6, 10, 4);
-		graphics.fillOval(3, 3, 10, 4);
-		graphics.setColor(new Color(225, 171, 38));
-		graphics.fillOval(3, 8, 10, 4);
-		graphics.fillOval(3, 5, 10, 4);
-		graphics.fillOval(3, 2, 10, 4);
-		graphics.setColor(new Color(255, 224, 116));
-		graphics.drawArc(5, 3, 5, 2, 20, 130);
-		graphics.drawArc(5, 6, 5, 2, 20, 130);
-		graphics.drawArc(5, 9, 5, 2, 20, 130);
+		graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+		graphics.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+		drawToolbarCoin(graphics, 1, 10);
+		drawToolbarCoin(graphics, 1, 6);
+		drawToolbarCoin(graphics, 1, 2);
 		graphics.dispose();
 		return image;
+	}
+
+	private void drawToolbarCoin(Graphics2D graphics, int x, int y)
+	{
+		graphics.setColor(new Color(94, 56, 8));
+		graphics.fillOval(x, y + 2, 14, 5);
+		graphics.setColor(new Color(244, 185, 38));
+		graphics.fillOval(x, y, 14, 5);
+		graphics.setColor(new Color(112, 66, 10));
+		graphics.setStroke(new BasicStroke(1f));
+		graphics.drawOval(x, y, 14, 5);
+		graphics.setColor(new Color(255, 230, 118));
+		graphics.drawArc(x + 2, y + 1, 9, 3, 20, 120);
 	}
 }

@@ -5,9 +5,6 @@ import com.google.gson.reflect.TypeToken;
 import com.merchlens.model.ItemMetadata;
 import com.merchlens.model.LatestPrice;
 import com.merchlens.model.MarketItem;
-import com.merchlens.model.OfferAdvice;
-import com.merchlens.model.FlipHistorySummary;
-import com.merchlens.model.FlipRecord;
 import com.merchlens.model.HistoricalSignal;
 import com.merchlens.model.PriceWindow;
 import com.merchlens.model.ItemSearchResult;
@@ -61,7 +58,7 @@ public class WikiMarketClient
 	private final RecommendationEngine recommendationEngine = new RecommendationEngine();
 	private final HistoricalSignalAnalyzer historicalSignalAnalyzer = new HistoricalSignalAnalyzer();
 	private final Map<Integer, CachedHistory> historyCache = Collections.synchronizedMap(new HashMap<>());
-	private final Map<Integer, CachedTimeseries> timeseriesCache = Collections.synchronizedMap(new HashMap<>());
+	private final Map<String, CachedTimeseries> timeseriesCache = Collections.synchronizedMap(new HashMap<>());
 
 	@Inject
 	WikiMarketClient(OkHttpClient okHttpClient, Gson gson)
@@ -77,21 +74,10 @@ public class WikiMarketClient
 
 	public SignalResponse getMarketSignals(MerchLensConfig config) throws IOException
 	{
-		return getMarketSignals(config, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new FlipHistorySummary(0, 0, 0, 0, 0, 0), new ArrayList<>());
+		return getMarketSignals(config, new ArrayList<>());
 	}
 
-	public SignalResponse getMarketSignals(MerchLensConfig config, Collection<OfferSnapshot> offerSnapshots) throws IOException
-	{
-		return getMarketSignals(config, offerSnapshots, new ArrayList<>(), new ArrayList<>(), new FlipHistorySummary(0, 0, 0, 0, 0, 0), new ArrayList<>());
-	}
-
-	public SignalResponse getMarketSignals(
-		MerchLensConfig config,
-		Collection<OfferSnapshot> offerSnapshots,
-		Collection<FlipRecord> openFlips,
-		Collection<Integer> favoriteItemIds,
-		FlipHistorySummary historySummary,
-		List<FlipRecord> recentClosedFlips) throws IOException
+	public SignalResponse getMarketSignals(MerchLensConfig config, Collection<Integer> favoriteItemIds) throws IOException
 	{
 		Map<Integer, ItemMetadata> mapping = mapping();
 		WikiEnvelope<LatestPrice> latest = getEnvelope("/latest", LATEST_TYPE);
@@ -117,7 +103,7 @@ public class WikiMarketClient
 
 		List<RecommendationDto> initialStaples = recommendationEngine.highVolumeStaples(marketItems, config);
 		List<RecommendationDto> initialOpportunities = recommendationEngine.screener(marketItems, config);
-		Map<Integer, HistoricalSignal> history = historicalSignals(initialStaples, initialOpportunities, openFlips, favoriteItemIds, false);
+		Map<Integer, HistoricalSignal> history = historicalSignals(initialStaples, initialOpportunities, favoriteItemIds, false);
 		List<RecommendationDto> staples = recommendationEngine.highVolumeStaples(marketItems, config, history);
 		List<RecommendationDto> opportunities = recommendationEngine.screener(marketItems, config, history);
 		List<RecommendationDto> favorites = favoriteRecommendations(marketItems, config, history, favoriteItemIds);
@@ -127,10 +113,7 @@ public class WikiMarketClient
 			opportunities,
 			staples,
 			favorites,
-			new LinkedHashSet<>(favoriteItemIds),
-			offerAdvice(offerSnapshots, openFlips, mapping, latest.getData()),
-			historySummary,
-			enrichNames(recentClosedFlips, mapping)
+			new LinkedHashSet<>(favoriteItemIds)
 		);
 	}
 
@@ -148,7 +131,7 @@ public class WikiMarketClient
 			opportunitiesWithFavorites.add(favorite);
 			favoriteItemIds.add(favorite.getItemId());
 		}
-		return historicalSignals(staples, opportunitiesWithFavorites, new ArrayList<>(), favoriteItemIds, true).size();
+		return historicalSignals(staples, opportunitiesWithFavorites, favoriteItemIds, true).size();
 	}
 
 	public int warmHistoricalSignals(Collection<RecommendationDto> visibleRecommendations) throws IOException
@@ -220,23 +203,33 @@ public class WikiMarketClient
 
 	public List<TimeseriesPoint> dailyTimeseries(int itemId) throws IOException
 	{
+		return cachedTimeseries(itemId, "5m");
+	}
+
+	public List<TimeseriesPoint> weeklyTimeseries(int itemId) throws IOException
+	{
+		return cachedTimeseries(itemId, "1h");
+	}
+
+	private List<TimeseriesPoint> cachedTimeseries(int itemId, String timestep) throws IOException
+	{
 		long now = System.currentTimeMillis() / 1000L;
-		CachedTimeseries cached = timeseriesCache.get(itemId);
+		String key = timestep + ":" + itemId;
+		CachedTimeseries cached = timeseriesCache.get(key);
 		if (cached != null && now - cached.loadedAt <= TIMESERIES_CACHE_SECONDS)
 		{
 			return cached.points;
 		}
 
-		TimeseriesResponse response = timeseries(itemId);
+		TimeseriesResponse response = timeseries(itemId, timestep);
 		List<TimeseriesPoint> points = response == null ? Collections.emptyList() : Collections.unmodifiableList(new ArrayList<>(response.getData()));
-		timeseriesCache.put(itemId, new CachedTimeseries(now, points));
+		timeseriesCache.put(key, new CachedTimeseries(now, points));
 		return points;
 	}
 
 	private Map<Integer, HistoricalSignal> historicalSignals(
 		List<RecommendationDto> staples,
 		List<RecommendationDto> opportunities,
-		Collection<FlipRecord> openFlips,
 		Collection<Integer> favoriteItemIds,
 		boolean fetchMissing) throws IOException
 	{
@@ -260,10 +253,6 @@ public class WikiMarketClient
 		{
 			addRecommendationIds(ids, staples, 100);
 			addRecommendationIds(ids, opportunities, opportunities.size());
-		}
-		for (FlipRecord record : openFlips)
-		{
-			ids.add(record.getItemId());
 		}
 		addFavoriteIds(ids, favoriteItemIds);
 		if (fetchMissing)
@@ -510,7 +499,7 @@ public class WikiMarketClient
 		return unavailable;
 	}
 
-	private TimeseriesResponse timeseries(int itemId) throws IOException
+	private TimeseriesResponse timeseries(int itemId, String timestep) throws IOException
 	{
 		HttpUrl base = HttpUrl.parse(WIKI_BASE);
 		if (base == null)
@@ -519,7 +508,7 @@ public class WikiMarketClient
 		}
 		HttpUrl url = base.newBuilder()
 			.addPathSegment("timeseries")
-			.addQueryParameter("timestep", "5m")
+			.addQueryParameter("timestep", timestep)
 			.addQueryParameter("id", Integer.toString(itemId))
 			.build();
 		return gson.fromJson(get(url, historyHttpClient), TIMESERIES_TYPE);
@@ -591,150 +580,6 @@ public class WikiMarketClient
 			return contains;
 		}
 		throw new IOException("No item matched \"" + query + "\".");
-	}
-
-	private List<FlipRecord> enrichNames(List<FlipRecord> records, Map<Integer, ItemMetadata> mapping)
-	{
-		for (FlipRecord record : records)
-		{
-			ItemMetadata metadata = mapping.get(record.getItemId());
-			if (metadata != null)
-			{
-				record.setItemName(metadata.getName());
-			}
-		}
-		return records;
-	}
-
-	private List<OfferAdvice> offerAdvice(
-		Collection<OfferSnapshot> offerSnapshots,
-		Collection<FlipRecord> openFlips,
-		Map<Integer, ItemMetadata> mapping,
-		Map<Integer, LatestPrice> latest)
-	{
-		Map<Integer, OfferSnapshot> latestByItem = new HashMap<>();
-		for (OfferSnapshot snapshot : offerSnapshots)
-		{
-			if (snapshot.getItemId() <= 0)
-			{
-				continue;
-			}
-			OfferSnapshot previous = latestByItem.get(snapshot.getItemId());
-			if (previous == null || snapshot.getUpdatedAt() >= previous.getUpdatedAt())
-			{
-				latestByItem.put(snapshot.getItemId(), snapshot);
-			}
-		}
-
-		List<OfferAdvice> advice = new ArrayList<>();
-		for (OfferSnapshot snapshot : latestByItem.values())
-		{
-			ItemMetadata metadata = mapping.get(snapshot.getItemId());
-			LatestPrice price = latest.get(snapshot.getItemId());
-			if (metadata == null || price == null || price.getHigh() == null)
-			{
-				continue;
-			}
-			OfferAdvice itemAdvice = offerAdvice(snapshot, metadata, price.getHigh());
-			if (itemAdvice != null)
-			{
-				advice.add(itemAdvice);
-			}
-		}
-		for (FlipRecord record : openFlips)
-		{
-			if (latestByItem.containsKey(record.getItemId()))
-			{
-				continue;
-			}
-			ItemMetadata metadata = mapping.get(record.getItemId());
-			LatestPrice price = latest.get(record.getItemId());
-			if (metadata == null || price == null || price.getHigh() == null)
-			{
-				continue;
-			}
-			record.setItemName(metadata.getName());
-			advice.add(offerAdvice(record, metadata, price.getHigh()));
-		}
-		return advice;
-	}
-
-	private OfferAdvice offerAdvice(OfferSnapshot snapshot, ItemMetadata metadata, int targetSellPrice)
-	{
-		String state = snapshot.getState();
-		if (!"BOUGHT".equals(state) && !"SELLING".equals(state) && !"CANCELLED_SELL".equals(state))
-		{
-			return null;
-		}
-
-		int filled = Math.max(snapshot.getFilledQuantity(), 0);
-		int averageBuyPrice = filled > 0 && snapshot.getSpent() > 0 ? snapshot.getSpent() / filled : snapshot.getPrice();
-		int netMargin = GeTax.netMargin(averageBuyPrice, targetSellPrice, metadata.getName());
-		String action;
-		String note;
-		if ("SELLING".equals(state))
-		{
-			int delta = targetSellPrice - snapshot.getPrice();
-			if (Math.abs(delta) < Math.max(10, snapshot.getPrice() * 0.002))
-			{
-				action = "Hold sell offer";
-				note = "Your sell price is close to the current Wiki high.";
-			}
-			else
-			{
-				action = delta > 0 ? "Consider higher relist" : "Consider lower relist";
-				note = "Current Wiki high moved " + formatSigned(delta) + " gp from your sell offer.";
-			}
-		}
-		else
-		{
-			action = netMargin > 0 ? "Sell target updated" : "Review before selling";
-			note = netMargin > 0
-				? "Use fresh market data before listing; target is based on latest Wiki high."
-				: "Current target would be tax-negative versus the observed buy price.";
-		}
-
-		return new OfferAdvice(
-			snapshot.getItemId(),
-			null,
-			metadata.getName(),
-			state,
-			action,
-			snapshot.getPrice(),
-			filled,
-			averageBuyPrice,
-			targetSellPrice,
-			netMargin,
-			note
-		);
-	}
-
-	private OfferAdvice offerAdvice(FlipRecord record, ItemMetadata metadata, int targetSellPrice)
-	{
-		int averageBuyPrice = record.getAverageBuyPrice();
-		int netMargin = GeTax.netMargin(averageBuyPrice, targetSellPrice, metadata.getName());
-		String action = netMargin > 0 ? "Open flip sell target" : "Open flip needs review";
-		String note = netMargin > 0
-			? "Fresh target from latest Wiki high. Refresh again before listing if this buy is old."
-			: "Current market target would be tax-negative versus your recorded buy.";
-		return new OfferAdvice(
-			record.getItemId(),
-			record.getId(),
-			metadata.getName(),
-			"OPEN",
-			action,
-			record.getBuyPrice(),
-			record.getBuyQuantity(),
-			averageBuyPrice,
-			targetSellPrice,
-			netMargin,
-			note
-		);
-	}
-
-	private String formatSigned(int value)
-	{
-		return value >= 0 ? "+" + value : Integer.toString(value);
 	}
 
 	private Map<Integer, ItemMetadata> mapping() throws IOException

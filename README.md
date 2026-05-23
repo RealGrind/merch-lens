@@ -2,7 +2,7 @@
 
 Merch Lens is a RuneLite external plugin for Grand Exchange market watching and flip research.
 
-It shows OSRS Wiki market data, post-tax margins, buy limits, volume, freshness, 24-hour trend estimates, favorites, item lookup, local flip history from observed GE fills, active GE offer tracking, and a profitable-only market screener inside RuneLite.
+It shows OSRS Wiki market data, post-tax margins, buy limits, volume, freshness, 24-hour trend estimates, favorites, item lookup, active GE offer tracking, and a profitable-only market screener inside RuneLite.
 
 Merch Lens is a beta research tool. Verify trades manually before buying or selling.
 
@@ -15,7 +15,7 @@ Merch Lens is a beta research tool. Verify trades manually before buying or sell
 - Price freshness and 24-hour trend labels.
 - Daily chart popouts from OSRS Wiki 5-minute timeseries data.
 - Display-only GE offer overlay with active slot progress and local timers.
-- Local-only flip history, active offer state, and favorites stored in RuneLite profile config.
+- Local-only active offer state and favorites stored in RuneLite profile config.
 
 ## Data Source
 

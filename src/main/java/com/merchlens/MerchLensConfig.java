@@ -8,6 +8,16 @@ import net.runelite.client.config.ConfigItem;
 public interface MerchLensConfig extends Config
 {
 	@ConfigItem(
+		keyName = "showGeOfferOverlay",
+		name = "Show GE offer overlay",
+		description = "Show the in-game overlay for active Grand Exchange offers."
+	)
+	default boolean showGeOfferOverlay()
+	{
+		return true;
+	}
+
+	@ConfigItem(
 		keyName = "budget",
 		name = "Bank size",
 		description = "Maximum GP price per item to show in recommendations.",

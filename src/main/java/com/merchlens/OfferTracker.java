@@ -5,7 +5,6 @@ import com.google.gson.reflect.TypeToken;
 import java.lang.reflect.Type;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -20,7 +19,6 @@ class OfferTracker
 	private static final long STARTUP_UNKNOWN_WINDOW_SECONDS = 20;
 	private static final Type TRACKED_OFFERS_TYPE = new TypeToken<List<TrackedOffer>>() {}.getType();
 
-	private final List<OfferSnapshot> snapshots = new ArrayList<>();
 	private final Map<Integer, TrackedOffer> activeOffers = new HashMap<>();
 	private final ConfigManager configManager;
 	private final Gson gson;
@@ -32,12 +30,7 @@ class OfferTracker
 		this.gson = gson;
 	}
 
-	OfferSnapshot record(GrandExchangeOffer offer)
-	{
-		return record(-1, offer);
-	}
-
-	synchronized OfferSnapshot record(int slot, GrandExchangeOffer offer)
+	synchronized void record(int slot, GrandExchangeOffer offer)
 	{
 		if (offer == null || offer.getItemId() <= 0)
 		{
@@ -46,25 +39,13 @@ class OfferTracker
 				activeOffers.remove(slot);
 				save();
 			}
-			return null;
+			return;
 		}
 		long now = Instant.now().getEpochSecond();
-		OfferSnapshot snapshot = new OfferSnapshot(slot, offer, now);
-		snapshots.add(snapshot);
-		while (snapshots.size() > 128)
-		{
-			snapshots.remove(0);
-		}
 		if (slot >= 0)
 		{
 			recordActiveOffer(slot, offer, now);
 		}
-		return snapshot;
-	}
-
-	synchronized List<OfferSnapshot> recent()
-	{
-		return Collections.unmodifiableList(new ArrayList<>(snapshots));
 	}
 
 	synchronized List<TrackedOffer> activeOffers()
@@ -105,11 +86,6 @@ class OfferTracker
 				activeOffers.put(offer.getSlot(), offer);
 			}
 		}
-	}
-
-	synchronized void clear()
-	{
-		snapshots.clear();
 	}
 
 	private void recordActiveOffer(int slot, GrandExchangeOffer offer, long now)

@@ -1,9 +1,7 @@
 package com.merchlens.ui;
 
 import com.merchlens.model.RecommendationDto;
-import com.merchlens.model.OfferAdvice;
-import com.merchlens.model.FlipHistorySummary;
-import com.merchlens.model.FlipRecord;
+import com.merchlens.GeTax;
 import com.merchlens.HighVolumeItemCatalog;
 import com.merchlens.model.ItemSearchResult;
 import com.merchlens.model.SignalResponse;
@@ -36,6 +34,7 @@ import java.awt.image.BufferedImage;
 import java.text.NumberFormat;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.ArrayList;
@@ -45,6 +44,7 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Set;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -90,6 +90,11 @@ public class MerchLensPanel extends PluginPanel
 	private static final int METRIC_LABEL_WIDTH = 64;
 	private static final int ITEM_ICON_SIZE = 32;
 	private static final int SEARCH_PANEL_HEIGHT = 148;
+	private static final int CALCULATOR_PANEL_HEIGHT = 206;
+	private static final int CALCULATOR_LABEL_X = 8;
+	private static final int CALCULATOR_FIELD_X = 84;
+	private static final int CALCULATOR_FIELD_WIDTH = LOOKUP_CONTROL_WIDTH - CALCULATOR_FIELD_X - 12;
+	private static final int CALCULATOR_CLOSE_X = LOOKUP_CONTROL_WIDTH - 22 - 8;
 	private static final int NAV_HEIGHT = 38;
 	private static final int PINNED_HELP_HEIGHT = 30;
 	private static final int CONTROL_HEIGHT = 24;
@@ -112,10 +117,9 @@ public class MerchLensPanel extends PluginPanel
 		.withZone(ZoneId.systemDefault());
 
 	private final Runnable refreshCallback;
-	private final Consumer<String> excludeCallback;
 	private final Consumer<String> searchCallback;
 	private final Consumer<Integer> favoriteCallback;
-	private final Consumer<RecommendationDto> dailyChartCallback;
+	private final BiConsumer<RecommendationDto, ChartPeriod> chartCallback;
 	private final Consumer<List<RecommendationDto>> visibleTrendCallback;
 	private final Consumer<Integer> bankSizeCallback;
 	private final Consumer<ScreenerFilters> screenerFiltersCallback;
@@ -126,6 +130,12 @@ public class MerchLensPanel extends PluginPanel
 	private final JLabel credit = new JLabel("Plugin Created by Real Grind");
 	private final JTextField searchField = new JTextField();
 	private final JTextField bankSizeField = new JTextField();
+	private final JTextField calculatorBuyPriceField = new JTextField();
+	private final JTextField calculatorSellPriceField = new JTextField();
+	private final JTextField calculatorQuantityField = new JTextField();
+	private final JLabel calculatorTaxEachValue = new JLabel("-");
+	private final JLabel calculatorTaxValue = new JLabel("-");
+	private final JLabel calculatorProfitValue = new JLabel("-");
 	private final JTextField screenerMinPriceField = new JTextField();
 	private final JTextField screenerMaxPriceField = new JTextField();
 	private final JTextField screenerMinBuyVolumeField = new JTextField();
@@ -135,6 +145,7 @@ public class MerchLensPanel extends PluginPanel
 	private final JPopupMenu searchPopup = new JPopupMenu();
 	private JScrollPane scrollPane;
 	private JFrame dailyChartFrame;
+	private int openChartItemId = -1;
 	private final MouseWheelListener wheelListener = this::scrollPanel;
 	private int staplesPage;
 	private int favoritesPage;
@@ -143,6 +154,7 @@ public class MerchLensPanel extends PluginPanel
 	private int stapleSortIndex;
 	private boolean stablePricesOnly;
 	private boolean upToDatePricesOnly;
+	private boolean calculatorExpanded;
 	private boolean favoritesExpanded;
 	private boolean highVolumeExpanded = true;
 	private boolean broaderExpanded;
@@ -162,6 +174,30 @@ public class MerchLensPanel extends PluginPanel
 	private int screenerMinBuyVolume;
 	private int screenerMinSellVolume;
 	private double screenerBuySellRatio;
+
+	public enum ChartPeriod
+	{
+		DAILY("Daily", "5m", 5 * 60L, 24 * 60 * 60L),
+		WEEKLY("Weekly", "1h", 60 * 60L, 7 * 24 * 60 * 60L);
+
+		private final String label;
+		private final String intervalLabel;
+		private final long intervalSeconds;
+		private final long durationSeconds;
+
+		ChartPeriod(String label, String intervalLabel, long intervalSeconds, long durationSeconds)
+		{
+			this.label = label;
+			this.intervalLabel = intervalLabel;
+			this.intervalSeconds = intervalSeconds;
+			this.durationSeconds = durationSeconds;
+		}
+
+		public String label()
+		{
+			return label;
+		}
+	}
 
 	public static class ScreenerFilters
 	{
@@ -208,10 +244,9 @@ public class MerchLensPanel extends PluginPanel
 
 	public MerchLensPanel(
 		Runnable refreshCallback,
-		Consumer<String> excludeCallback,
 		Consumer<String> searchCallback,
 		Consumer<Integer> favoriteCallback,
-		Consumer<RecommendationDto> dailyChartCallback,
+		BiConsumer<RecommendationDto, ChartPeriod> chartCallback,
 		Consumer<List<RecommendationDto>> visibleTrendCallback,
 		Consumer<Integer> bankSizeCallback,
 		int bankSize,
@@ -225,10 +260,9 @@ public class MerchLensPanel extends PluginPanel
 	{
 		super(false);
 		this.refreshCallback = refreshCallback;
-		this.excludeCallback = excludeCallback;
 		this.searchCallback = searchCallback;
 		this.favoriteCallback = favoriteCallback;
-		this.dailyChartCallback = dailyChartCallback;
+		this.chartCallback = chartCallback;
 		this.visibleTrendCallback = visibleTrendCallback;
 		this.bankSizeCallback = bankSizeCallback;
 		this.bankSize = Math.max(1, bankSize);
@@ -351,6 +385,9 @@ public class MerchLensPanel extends PluginPanel
 				flushDeferredRecommendationRender();
 			}
 		});
+		configureCalculatorField(calculatorBuyPriceField, "Buy price per item.");
+		configureCalculatorField(calculatorSellPriceField, "Sell price per item.");
+		configureCalculatorField(calculatorQuantityField, "Item quantity.");
 		configureScreenerField(screenerMinPriceField, "Minimum Buy at price. Blank means no minimum.");
 		configureScreenerField(screenerMaxPriceField, "Maximum Buy at price. Blank means no maximum.");
 		configureScreenerField(screenerMinBuyVolumeField, "Buy volume per hour. Leave blank for no filter.");
@@ -440,22 +477,37 @@ public class MerchLensPanel extends PluginPanel
 		});
 	}
 
-	public void showDailyChartLoading(String itemName)
-	{
-		SwingUtilities.invokeLater(this::restoreFooterStatus);
-	}
-
-	public void showDailyChart(String itemName, List<TimeseriesPoint> points)
+	public void showChartLoading(RecommendationDto recommendation, ChartPeriod period)
 	{
 		SwingUtilities.invokeLater(() -> {
-			openDailyChartDialog(safeItemName(itemName), points == null ? Collections.emptyList() : points);
+			if (dailyChartFrame != null && recommendation != null && openChartItemId == recommendation.getItemId())
+			{
+				dailyChartFrame.setTitle("Loading " + period.label.toLowerCase(Locale.US) + " chart - " + safeItemName(recommendation.getItemName()));
+			}
 			restoreFooterStatus();
 		});
 	}
 
-	public void showDailyChartError(String itemName, String message)
+	public void showChart(RecommendationDto recommendation, ChartPeriod period, List<TimeseriesPoint> points)
 	{
-		SwingUtilities.invokeLater(this::restoreFooterStatus);
+		SwingUtilities.invokeLater(() -> {
+			if (recommendation != null)
+			{
+				openChartDialog(recommendation, period, points == null ? Collections.emptyList() : points);
+			}
+			restoreFooterStatus();
+		});
+	}
+
+	public void showChartError(RecommendationDto recommendation, ChartPeriod period, String message)
+	{
+		SwingUtilities.invokeLater(() -> {
+			if (dailyChartFrame != null && recommendation != null && openChartItemId == recommendation.getItemId())
+			{
+				dailyChartFrame.setTitle(period.label + " chart unavailable - " + safeItemName(recommendation.getItemName()));
+			}
+			restoreFooterStatus();
+		});
 	}
 
 	public void showRecommendations(SignalResponse response)
@@ -520,27 +572,6 @@ public class MerchLensPanel extends PluginPanel
 		List<RecommendationDto> recommendations = response.getRecommendations();
 		favoriteItemIds = new HashSet<>(response.getFavoriteItemIds());
 		status.setText(updatedStatus(response.getGeneratedAt()));
-
-			FlipHistorySummary summary = response.getFlipHistorySummary();
-			if (summary.getOpenCount() > 0 || summary.getClosedCount() > 0)
-			{
-				content.add(sectionTitle("Flip History"));
-				content.add(historySummary(summary));
-				response.getRecentClosedFlips().stream()
-					.limit(3)
-					.forEach(record -> content.add(closedFlipCard(record)));
-				content.add(Box.createVerticalStrut(8));
-			}
-
-			if (!response.getOfferAdvice().isEmpty())
-			{
-				content.add(sectionTitle("My Offers"));
-				content.add(sectionHelp("Updated sell/relist targets from current Wiki market data."));
-				response.getOfferAdvice().stream()
-					.limit(8)
-					.forEach(advice -> content.add(offerCard(advice)));
-				content.add(Box.createVerticalStrut(8));
-			}
 
 			List<RecommendationDto> favoriteCandidates = response.getFavoriteRecommendations();
 			List<RecommendationDto> favorites = applyRecommendationFilters(favoriteCandidates);
@@ -612,7 +643,7 @@ public class MerchLensPanel extends PluginPanel
 
 			if (recommendations.isEmpty())
 			{
-				content.add(emptyState("No market items", "Refresh market data or adjust your bank size."));
+			content.add(emptyState("No market items", "Refresh market data or adjust your cash stack."));
 			}
 
 			content.revalidate();
@@ -786,7 +817,8 @@ public class MerchLensPanel extends PluginPanel
 		panel.setOpaque(false);
 		panel.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 		panel.setAlignmentX(LEFT_ALIGNMENT);
-		fixedHeight(panel, SEARCH_PANEL_HEIGHT);
+		boolean showSearchMessage = hasSearchInlineMessage();
+		fixedHeight(panel, SEARCH_PANEL_HEIGHT - (showSearchMessage ? 0 : 20) + (calculatorExpanded ? CALCULATOR_PANEL_HEIGHT : 0));
 
 		JLabel label = new JLabel("Item Lookup");
 		label.setForeground(Color.WHITE);
@@ -796,22 +828,33 @@ public class MerchLensPanel extends PluginPanel
 		JButton search = new JButton("Search");
 		search.setFont(BODY_FONT);
 		search.addActionListener(event -> submitSearch());
+		JButton calculator = new CalculatorButton();
+		calculator.setToolTipText("Open profit calculator.");
+		calculator.addActionListener(event -> toggleCalculator());
 		JPanel buttonRow = new JPanel(new BorderLayout());
 		buttonRow.setOpaque(false);
 		fixedSize(buttonRow, LOOKUP_CONTROL_WIDTH, 26);
 		buttonRow.setAlignmentX(LEFT_ALIGNMENT);
 		buttonRow.add(search, BorderLayout.WEST);
+		buttonRow.add(calculator, BorderLayout.EAST);
 
 		panel.add(label);
 		panel.add(Box.createVerticalStrut(5));
 		panel.add(searchInputControl());
 		panel.add(Box.createVerticalStrut(5));
 		panel.add(buttonRow);
-		panel.add(Box.createVerticalStrut(4));
-		searchInlineMessage.setText(searchInlineMessage.getText() == null || searchInlineMessage.getText().trim().isEmpty() ? " " : searchInlineMessage.getText());
-		fixedSize(searchInlineMessage, LOOKUP_CONTROL_WIDTH, 16);
-		panel.add(searchInlineMessage);
-		panel.add(Box.createVerticalStrut(5));
+		if (showSearchMessage)
+		{
+			panel.add(Box.createVerticalStrut(4));
+			fixedSize(searchInlineMessage, LOOKUP_CONTROL_WIDTH, 16);
+			panel.add(searchInlineMessage);
+		}
+		if (calculatorExpanded)
+		{
+			panel.add(Box.createVerticalStrut(4));
+			panel.add(calculatorPanel());
+		}
+		panel.add(Box.createVerticalStrut(calculatorExpanded ? 8 : 5));
 		panel.add(bankSizeControl());
 		return panel;
 	}
@@ -842,17 +885,77 @@ public class MerchLensPanel extends PluginPanel
 		row.setAlignmentX(LEFT_ALIGNMENT);
 		fixedSize(row, LOOKUP_CONTROL_WIDTH, CONTROL_HEIGHT);
 
-		JLabel label = new JLabel("Bank size");
+		JLabel label = new JLabel("Cash stack");
 		label.setForeground(Color.LIGHT_GRAY);
 		label.setFont(BODY_FONT);
 		label.setToolTipText("Max item price shown in recommendations.");
-		fixedSize(label, 62, CONTROL_HEIGHT);
+		fixedSize(label, 74, CONTROL_HEIGHT);
 
-		fixedSize(bankSizeField, LOOKUP_CONTROL_WIDTH - 68, CONTROL_HEIGHT);
+		fixedSize(bankSizeField, LOOKUP_CONTROL_WIDTH - 80, CONTROL_HEIGHT);
 		bankSizeField.setToolTipText("Max item price shown in recommendations.");
 		row.add(label, BorderLayout.WEST);
 		row.add(bankSizeField, BorderLayout.CENTER);
 		return row;
+	}
+
+	private JPanel calculatorPanel()
+	{
+		JPanel panel = new JPanel();
+		panel.setLayout(null);
+		panel.setOpaque(true);
+		panel.setBackground(new Color(30, 30, 30));
+		panel.setBorder(BorderFactory.createLineBorder(new Color(54, 54, 54)));
+		panel.setAlignmentX(LEFT_ALIGNMENT);
+		fixedSize(panel, LOOKUP_CONTROL_WIDTH, CALCULATOR_PANEL_HEIGHT - 8);
+
+		JLabel title = new JLabel("Profit Calculator");
+		title.setForeground(Color.WHITE);
+		title.setFont(TITLE_FONT);
+		title.setBounds(8, 8, 160, 22);
+		JButton close = new CloseButton();
+		close.setToolTipText("Close calculator.");
+		close.addActionListener(event -> toggleCalculator());
+		close.setBounds(CALCULATOR_CLOSE_X, 8, CLEAR_BUTTON_SIZE, CLEAR_BUTTON_SIZE);
+
+		panel.add(title);
+		panel.add(close);
+		addCalculatorInputRow(panel, "Buy price", calculatorBuyPriceField, 38);
+		addCalculatorInputRow(panel, "Sell price", calculatorSellPriceField, 65);
+		addCalculatorInputRow(panel, "Quantity", calculatorQuantityField, 92);
+		addCalculatorResultRow(panel, "Tax per item", calculatorTaxEachValue, 124);
+		addCalculatorResultRow(panel, "Total tax", calculatorTaxValue, 146);
+		addCalculatorResultRow(panel, "Post-tax", calculatorProfitValue, 168);
+		updateCalculatorResult();
+		return panel;
+	}
+
+	private void addCalculatorInputRow(JPanel panel, String labelText, JTextField field, int y)
+	{
+		JLabel label = new JLabel(labelText);
+		label.setForeground(Color.LIGHT_GRAY);
+		label.setFont(STAT_LABEL_FONT);
+		label.setHorizontalAlignment(JLabel.LEFT);
+		label.setBounds(CALCULATOR_LABEL_X, y + 2, CALCULATOR_FIELD_X - CALCULATOR_LABEL_X - 8, 18);
+		field.setBounds(CALCULATOR_FIELD_X, y, CALCULATOR_FIELD_WIDTH, 22);
+
+		panel.add(label);
+		panel.add(field);
+	}
+
+	private void addCalculatorResultRow(JPanel panel, String labelText, JLabel value, int y)
+	{
+		JLabel label = new JLabel(labelText);
+		label.setForeground(Color.GRAY);
+		label.setFont(STAT_LABEL_FONT);
+		label.setHorizontalAlignment(JLabel.LEFT);
+		label.setBounds(CALCULATOR_LABEL_X, y, CALCULATOR_FIELD_X - CALCULATOR_LABEL_X - 8, 18);
+		value.setFont(BODY_FONT);
+		value.setHorizontalAlignment(JLabel.RIGHT);
+		value.setToolTipText("Uses standard GE tax: 2%, capped at 5M gp per item.");
+		value.setBounds(CALCULATOR_FIELD_X, y, CALCULATOR_FIELD_WIDTH, 18);
+
+		panel.add(label);
+		panel.add(value);
 	}
 
 	private JPanel screenerControls()
@@ -935,13 +1038,94 @@ public class MerchLensPanel extends PluginPanel
 		});
 	}
 
+	private void configureCalculatorField(JTextField field, String tooltip)
+	{
+		field.setFont(BODY_FONT);
+		field.setHorizontalAlignment(JTextField.RIGHT);
+		field.setToolTipText(tooltip);
+		field.setForeground(Color.WHITE);
+		field.setCaretColor(Color.WHITE);
+		field.setBackground(new Color(18, 18, 18));
+		field.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createLineBorder(new Color(78, 78, 78)),
+			BorderFactory.createEmptyBorder(1, 4, 1, 4)
+		));
+		field.getDocument().addDocumentListener(new DocumentListener()
+		{
+			@Override
+			public void insertUpdate(DocumentEvent event)
+			{
+				updateCalculatorResult();
+			}
+
+			@Override
+			public void removeUpdate(DocumentEvent event)
+			{
+				updateCalculatorResult();
+			}
+
+			@Override
+			public void changedUpdate(DocumentEvent event)
+			{
+				updateCalculatorResult();
+			}
+		});
+		field.addFocusListener(new FocusAdapter()
+		{
+			@Override
+			public void focusLost(FocusEvent event)
+			{
+				flushDeferredRecommendationRender();
+			}
+		});
+	}
+
+	private void toggleCalculator()
+	{
+		calculatorExpanded = !calculatorExpanded;
+		renderCurrent();
+		if (calculatorExpanded)
+		{
+			SwingUtilities.invokeLater(calculatorBuyPriceField::requestFocusInWindow);
+		}
+	}
+
+	private void updateCalculatorResult()
+	{
+		Integer buyPrice = parseGpAmount(calculatorBuyPriceField.getText());
+		Integer sellPrice = parseGpAmount(calculatorSellPriceField.getText());
+		Integer quantity = parseGpAmount(calculatorQuantityField.getText());
+		if (buyPrice == null || sellPrice == null || quantity == null || quantity <= 0)
+		{
+			calculatorTaxEachValue.setText("-");
+			calculatorTaxEachValue.setForeground(Color.LIGHT_GRAY);
+			calculatorTaxValue.setText("-");
+			calculatorTaxValue.setForeground(Color.LIGHT_GRAY);
+			calculatorProfitValue.setText("-");
+			calculatorProfitValue.setForeground(Color.LIGHT_GRAY);
+			return;
+		}
+
+		int taxEach = GeTax.tax(sellPrice, null);
+		long totalTax = (long) taxEach * quantity;
+		long profitEach = (long) sellPrice - buyPrice - taxEach;
+		long totalProfit = profitEach * quantity;
+
+		calculatorTaxEachValue.setText(gp(taxEach));
+		calculatorTaxEachValue.setForeground(Color.LIGHT_GRAY);
+		calculatorTaxValue.setText(gp(totalTax));
+		calculatorTaxValue.setForeground(Color.LIGHT_GRAY);
+		calculatorProfitValue.setText(signedGp(totalProfit));
+		calculatorProfitValue.setForeground(totalProfit >= 0 ? riskColor("SAFE") : riskColor("ADVANCED"));
+	}
+
 	private void commitBankSize()
 	{
 		Integer parsed = parseGpAmount(bankSizeField.getText());
 		if (parsed == null)
 		{
 			bankSizeField.setText(GP.format(bankSize));
-			setSearchInlineMessage("Enter a valid bank size.", riskColor("BALANCED"));
+			setSearchInlineMessage("Enter a valid cash stack.", riskColor("BALANCED"));
 			return;
 		}
 		int updated = Math.max(1, parsed);
@@ -1166,8 +1350,7 @@ public class MerchLensPanel extends PluginPanel
 	{
 		if (!selectingSearchSuggestion)
 		{
-			if (searchInlineMessage.getText() != null
-				&& !searchInlineMessage.getText().trim().isEmpty()
+			if (hasSearchInlineMessage()
 				&& searchField.getText() != null
 				&& !searchField.getText().trim().isEmpty())
 			{
@@ -1175,6 +1358,11 @@ public class MerchLensPanel extends PluginPanel
 			}
 			SwingUtilities.invokeLater(this::updateSearchSuggestions);
 		}
+	}
+
+	private boolean hasSearchInlineMessage()
+	{
+		return searchInlineMessage.getText() != null && !searchInlineMessage.getText().trim().isEmpty();
 	}
 
 	private void setSearchInlineMessage(String message, Color color)
@@ -1906,37 +2094,46 @@ public class MerchLensPanel extends PluginPanel
 		button.setToolTipText("Daily chart");
 		button.setAlignmentX(Component.CENTER_ALIGNMENT);
 		button.addActionListener(event -> {
-			if (dailyChartCallback != null)
+			if (chartCallback != null)
 			{
-				dailyChartCallback.accept(rec);
+				chartCallback.accept(rec, ChartPeriod.DAILY);
 			}
 		});
 		return button;
 	}
 
-	private void openDailyChartDialog(String itemName, List<TimeseriesPoint> points)
+	private void openChartDialog(RecommendationDto recommendation, ChartPeriod period, List<TimeseriesPoint> points)
 	{
+		String itemName = safeItemName(recommendation.getItemName());
 		Window owner = SwingUtilities.getWindowAncestor(this);
-		if (dailyChartFrame != null)
+		boolean replacingItem = dailyChartFrame == null || openChartItemId != recommendation.getItemId();
+		if (replacingItem && dailyChartFrame != null)
 		{
 			dailyChartFrame.dispose();
 			dailyChartFrame = null;
 		}
 
-		JFrame frame = new JFrame("Daily chart - " + itemName);
-		frame.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
-		frame.setResizable(true);
-		frame.addWindowListener(new WindowAdapter()
+		JFrame frame = dailyChartFrame;
+		if (frame == null)
 		{
-			@Override
-			public void windowClosed(WindowEvent event)
+			frame = new JFrame();
+			JFrame newFrame = frame;
+			frame.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+			frame.setResizable(true);
+			frame.addWindowListener(new WindowAdapter()
 			{
-				if (dailyChartFrame == frame)
+				@Override
+				public void windowClosed(WindowEvent event)
 				{
-					dailyChartFrame = null;
+					if (dailyChartFrame == newFrame)
+					{
+						dailyChartFrame = null;
+						openChartItemId = -1;
+					}
 				}
-			}
-		});
+			});
+		}
+		frame.setTitle(period.label + " chart - " + itemName);
 
 		JPanel shell = new JPanel(new BorderLayout(0, 8));
 		shell.setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -1946,22 +2143,72 @@ public class MerchLensPanel extends PluginPanel
 		title.setForeground(Color.WHITE);
 		title.setFont(SECTION_FONT);
 
-		DailyChartPanel chart = new DailyChartPanel(points);
+		JPanel heading = new JPanel(new BorderLayout(8, 0));
+		heading.setOpaque(false);
+		heading.add(title, BorderLayout.WEST);
+		heading.add(chartPeriodControls(recommendation, period), BorderLayout.EAST);
+
+		DailyChartPanel chart = new DailyChartPanel(points, period);
 		chart.setPreferredSize(new Dimension(1240, 650));
 
-		JLabel legend = new JLabel("Daily 5m Wiki history. Hover for exact interval price and volume.");
+		JLabel legend = new JLabel(period.label + " " + period.intervalLabel + " Wiki history. Hover for exact interval price and volume.");
 		legend.setForeground(Color.LIGHT_GRAY);
 		legend.setFont(STAT_LABEL_FONT);
 
-		shell.add(title, BorderLayout.NORTH);
+		shell.add(heading, BorderLayout.NORTH);
 		shell.add(chart, BorderLayout.CENTER);
 		shell.add(legend, BorderLayout.SOUTH);
 		frame.setContentPane(shell);
-		frame.pack();
-		frame.setMinimumSize(new Dimension(680, 420));
-		frame.setLocationRelativeTo(owner == null ? this : owner);
+		if (dailyChartFrame == null)
+		{
+			frame.pack();
+			frame.setMinimumSize(new Dimension(680, 420));
+			frame.setLocationRelativeTo(owner == null ? this : owner);
+		}
+		else
+		{
+			frame.revalidate();
+			frame.repaint();
+		}
+		openChartItemId = recommendation.getItemId();
 		dailyChartFrame = frame;
 		frame.setVisible(true);
+	}
+
+	private JPanel chartPeriodControls(RecommendationDto recommendation, ChartPeriod selectedPeriod)
+	{
+		JPanel controls = new JPanel(new GridLayout(1, 2, 4, 0));
+		controls.setOpaque(false);
+		controls.add(chartPeriodButton("Daily", recommendation, ChartPeriod.DAILY, selectedPeriod));
+		controls.add(chartPeriodButton("Weekly", recommendation, ChartPeriod.WEEKLY, selectedPeriod));
+		return controls;
+	}
+
+	private JButton chartPeriodButton(
+		String text,
+		RecommendationDto recommendation,
+		ChartPeriod period,
+		ChartPeriod selectedPeriod)
+	{
+		boolean selected = period == selectedPeriod;
+		JButton button = new JButton(text);
+		button.setFont(BODY_FONT);
+		button.setFocusPainted(false);
+		button.setMargin(new Insets(0, 10, 0, 10));
+		button.setForeground(selected ? Color.WHITE : Color.LIGHT_GRAY);
+		button.setBackground(selected ? ColorScheme.DARK_GRAY_COLOR : ColorScheme.DARKER_GRAY_COLOR);
+		button.setOpaque(true);
+		button.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createMatteBorder(0, 0, selected ? 2 : 1, 0, selected ? TAB_ACCENT : ColorScheme.DARKER_GRAY_COLOR),
+			BorderFactory.createEmptyBorder(5, 10, 5, 10)
+		));
+		button.addActionListener(event -> {
+			if (!selected && chartCallback != null)
+			{
+				chartCallback.accept(recommendation, period);
+			}
+		});
+		return button;
 	}
 
 	private JButton favoriteButton(RecommendationDto rec)
@@ -1981,32 +2228,6 @@ public class MerchLensPanel extends PluginPanel
 		return button;
 	}
 
-	private JPanel historySummary(FlipHistorySummary summary)
-	{
-		JPanel card = baseCard();
-		card.add(priceRow("Open", Integer.toString(summary.getOpenCount()), Color.WHITE));
-		card.add(priceRow("Closed", Integer.toString(summary.getClosedCount()), Color.WHITE));
-		card.add(priceRow("Qty", GP.format(summary.getTotalQuantity()), Color.WHITE));
-		card.add(priceRow("Net", gp(summary.getNetProfit()), summary.getNetProfit() >= 0 ? riskColor("SAFE") : riskColor("ADVANCED")));
-		if (summary.getExcludedCount() > 0)
-		{
-			card.add(priceRow("Excluded", Integer.toString(summary.getExcludedCount()), Color.LIGHT_GRAY));
-		}
-		card.add(wrapped("Local profile history. Excluded trades do not count toward totals."));
-		return finish(card);
-	}
-
-	private JPanel closedFlipCard(FlipRecord record)
-	{
-		JPanel card = baseCard();
-		card.add(title("Closed flip: " + displayName(record)));
-		card.add(priceRow("Bought", gp(record.getAverageBuyPrice()) + " x " + GP.format(record.getBuyQuantity()), Color.WHITE));
-		card.add(priceRow("Sold", gp(record.getAverageSellPrice()) + " x " + GP.format(record.getSellQuantity()), Color.WHITE));
-		card.add(wrapped("Net " + gp(record.getNetProfit()) + " | ROI " + String.format("%.2f%%", record.getRoi() * 100)));
-		card.add(actionButton("Exclude", () -> exclude(record.getId())));
-		return finish(card);
-	}
-
 	private void addTrend(JPanel card, RecommendationDto rec)
 	{
 		if (rec.getMarketState() == null || "UNKNOWN".equals(rec.getMarketState()))
@@ -2015,34 +2236,6 @@ public class MerchLensPanel extends PluginPanel
 			return;
 		}
 		card.add(priceRow("Trend", trendText(rec.getMarketState()), trendColor(rec.getMarketState())));
-	}
-
-	private JPanel offerCard(OfferAdvice advice)
-	{
-		JPanel card = baseCard();
-		card.add(title(advice.getAction() + ": " + advice.getItemName()));
-		card.add(priceRow("State", advice.getState(), Color.LIGHT_GRAY));
-		card.add(priceRow("Bought", gp(advice.getAverageBuyPrice()) + " x " + GP.format(advice.getFilledQuantity()), Color.WHITE));
-		card.add(priceRow("Sell at", gp(advice.getTargetSellPrice()), Color.WHITE));
-		card.add(priceRow("Net", gp(advice.getNetMargin()) + " ea", advice.getNetMargin() >= 0 ? riskColor("SAFE") : riskColor("ADVANCED")));
-		card.add(wrapped(advice.getNote()));
-		if (advice.getRecordId() != null)
-		{
-			card.add(actionButton("Exclude", () -> exclude(advice.getRecordId())));
-		}
-		return finish(card);
-	}
-
-	private JPanel actionButton(String text, Runnable action)
-	{
-		JPanel panel = new JPanel(new BorderLayout());
-		panel.setOpaque(false);
-		panel.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
-		JButton button = new JButton(text);
-		button.setFont(BODY_FONT);
-		button.addActionListener(event -> action.run());
-		panel.add(button, BorderLayout.WEST);
-		return panel;
 	}
 
 	private JPanel baseCard()
@@ -2307,6 +2500,9 @@ public class MerchLensPanel extends PluginPanel
 	{
 		return searchField.isFocusOwner()
 			|| bankSizeField.isFocusOwner()
+			|| calculatorBuyPriceField.isFocusOwner()
+			|| calculatorSellPriceField.isFocusOwner()
+			|| calculatorQuantityField.isFocusOwner()
 			|| screenerMinPriceField.isFocusOwner()
 			|| screenerMaxPriceField.isFocusOwner()
 			|| screenerMinBuyVolumeField.isFocusOwner()
@@ -2522,21 +2718,6 @@ public class MerchLensPanel extends PluginPanel
 		return (value >= 0 ? "+" : "") + gp(value);
 	}
 
-	private String displayName(FlipRecord record)
-	{
-		if (record.getItemName() != null && !record.getItemName().trim().isEmpty())
-		{
-			return record.getItemName();
-		}
-		return "item " + record.getItemId();
-	}
-
-	private void exclude(String recordId)
-	{
-		excludeCallback.accept(recordId);
-		refreshCallback.run();
-	}
-
 	private class WheelScrollPane extends JScrollPane
 	{
 		WheelScrollPane(Component view)
@@ -2650,6 +2831,61 @@ public class MerchLensPanel extends PluginPanel
 		}
 	}
 
+	private static class CalculatorButton extends JButton
+	{
+		private CalculatorButton()
+		{
+			setPreferredSize(new Dimension(32, 26));
+			setMinimumSize(new Dimension(32, 26));
+			setMaximumSize(new Dimension(32, 26));
+			setContentAreaFilled(false);
+			setBorderPainted(false);
+			setFocusPainted(false);
+			setOpaque(false);
+			setMargin(new Insets(0, 0, 0, 0));
+		}
+
+		@Override
+		protected void paintComponent(Graphics graphics)
+		{
+			Graphics2D g = (Graphics2D) graphics.create();
+			g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+			g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+			if (getModel().isPressed())
+			{
+				g.setColor(ColorScheme.DARK_GRAY_COLOR);
+			}
+			else if (getModel().isRollover())
+			{
+				g.setColor(new Color(42, 42, 42));
+			}
+			else
+			{
+				g.setColor(new Color(28, 28, 28));
+			}
+			g.fillRoundRect(1, 1, getWidth() - 2, getHeight() - 2, 3, 3);
+			g.setColor(new Color(55, 55, 55));
+			g.drawRoundRect(1, 1, getWidth() - 3, getHeight() - 3, 3, 3);
+
+			int x = (getWidth() - 15) / 2;
+			int y = 4;
+			g.setColor(getModel().isRollover() ? Color.WHITE : Color.LIGHT_GRAY);
+			g.setStroke(new BasicStroke(1.2f));
+			g.drawRoundRect(x, y, 15, 17, 2, 2);
+			g.setColor(TAB_ACCENT);
+			g.fillRoundRect(x + 3, y + 3, 9, 4, 1, 1);
+			g.setColor(getModel().isRollover() ? Color.WHITE : Color.LIGHT_GRAY);
+			for (int row = 0; row < 3; row++)
+			{
+				for (int col = 0; col < 3; col++)
+				{
+					g.fillRect(x + 3 + col * 4, y + 9 + row * 3, 2, 2);
+				}
+			}
+			g.dispose();
+		}
+	}
+
 	private static class CloseButton extends JButton
 	{
 		private CloseButton()
@@ -2691,18 +2927,22 @@ public class MerchLensPanel extends PluginPanel
 		private static final Color HIGH_PRICE_COLOR = new Color(255, 157, 67);
 		private static final Color VOLUME_HIGH_COLOR = new Color(255, 157, 67, 185);
 		private static final Color VOLUME_LOW_COLOR = new Color(94, 166, 255, 185);
-		private static final long EXPECTED_TIMESTEP_SECONDS = 5 * 60L;
 		private static final int SPARSE_POINT_THRESHOLD = 72;
 		private static final DateTimeFormatter CHART_TIME = DateTimeFormatter.ofPattern("MMM d, yyyy, h:mm a", Locale.US)
 			.withZone(ZoneId.systemDefault());
+		private static final DateTimeFormatter AXIS_TIME = DateTimeFormatter.ofPattern("h:mm a", Locale.US);
+		private static final DateTimeFormatter AXIS_DATE = DateTimeFormatter.ofPattern("MMM d", Locale.US);
 		private final List<TimeseriesPoint> points;
+		private final ChartPeriod period;
 		private int hoverIndex = -1;
 		private int hoverY = -1;
 
-		private DailyChartPanel(List<TimeseriesPoint> points)
+		private DailyChartPanel(List<TimeseriesPoint> points, ChartPeriod period)
 		{
 			this.points = points == null ? new ArrayList<>() : new ArrayList<>(points);
 			this.points.sort(Comparator.comparingLong(TimeseriesPoint::getTimestamp));
+			this.period = period;
+			limitToPeriodWindow();
 			setOpaque(true);
 			setBackground(new Color(24, 24, 24));
 			setBorder(BorderFactory.createLineBorder(new Color(45, 45, 45)));
@@ -2740,7 +2980,7 @@ public class MerchLensPanel extends PluginPanel
 			List<TimeseriesPoint> highPoints = pricePoints(true);
 			if (lowPoints.size() < 2 && highPoints.size() < 2)
 			{
-				drawCentered(g, "No daily chart data returned.");
+				drawCentered(g, "No " + period.label.toLowerCase(Locale.US) + " chart data returned.");
 				g.dispose();
 				return;
 			}
@@ -2750,6 +2990,7 @@ public class MerchLensPanel extends PluginPanel
 			TimeRange timeRange = timeRange(chartPoints);
 			drawGrid(g, layout, range);
 			drawVolume(g, chartPoints, layout, timeRange);
+			drawTimeAxis(g, layout, timeRange);
 			drawPriceLine(g, lowPoints, false, layout, range, timeRange, LOW_PRICE_COLOR);
 			drawPriceLine(g, highPoints, true, layout, range, timeRange, HIGH_PRICE_COLOR);
 			drawPriceDots(g, lowPoints, false, layout, range, timeRange, LOW_PRICE_COLOR);
@@ -2763,9 +3004,9 @@ public class MerchLensPanel extends PluginPanel
 
 			g.setFont(STAT_LABEL_FONT);
 			g.setColor(LOW_PRICE_COLOR);
-			g.drawString("Buy", layout.left, getHeight() - 7);
+			g.drawString("Buy", layout.left, layout.volumeTop - 8);
 			g.setColor(HIGH_PRICE_COLOR);
-			g.drawString("Sell", layout.left + 58, getHeight() - 7);
+			g.drawString("Sell", layout.left + 58, layout.volumeTop - 8);
 			g.dispose();
 		}
 
@@ -2797,12 +3038,23 @@ public class MerchLensPanel extends PluginPanel
 			int left = 64;
 			int right = 28;
 			int top = 28;
-			int priceBottom = getHeight() - 180;
-			int volumeTop = getHeight() - 152;
-			int volumeBottom = getHeight() - 48;
+			int priceBottom = getHeight() - 198;
+			int volumeTop = getHeight() - 170;
+			int volumeBottom = getHeight() - 66;
 			int plotWidth = Math.max(1, getWidth() - left - right);
 			int plotHeight = Math.max(1, priceBottom - top);
 			return new ChartLayout(left, top, priceBottom, volumeTop, volumeBottom, plotWidth, plotHeight);
+		}
+
+		private void limitToPeriodWindow()
+		{
+			if (points.isEmpty())
+			{
+				return;
+			}
+			long latestTimestamp = points.get(points.size() - 1).getTimestamp();
+			long cutoff = latestTimestamp - period.durationSeconds;
+			points.removeIf(point -> point == null || point.getTimestamp() < cutoff);
 		}
 
 		private List<TimeseriesPoint> chartPoints()
@@ -2891,12 +3143,12 @@ public class MerchLensPanel extends PluginPanel
 			if (min == Long.MAX_VALUE || max == Long.MIN_VALUE)
 			{
 				min = 0;
-				max = EXPECTED_TIMESTEP_SECONDS;
+				max = period.intervalSeconds;
 			}
 			if (min == max)
 			{
-				min -= EXPECTED_TIMESTEP_SECONDS;
-				max += EXPECTED_TIMESTEP_SECONDS;
+				min -= period.intervalSeconds;
+				max += period.intervalSeconds;
 			}
 			return new TimeRange(min, max);
 		}
@@ -2952,6 +3204,82 @@ public class MerchLensPanel extends PluginPanel
 			}
 		}
 
+		private void drawTimeAxis(Graphics2D g, ChartLayout layout, TimeRange timeRange)
+		{
+			if (period == ChartPeriod.DAILY)
+			{
+				drawDailyTimeAxis(g, layout, timeRange);
+			}
+			else
+			{
+				drawWeeklyTimeAxis(g, layout, timeRange);
+			}
+		}
+
+		private void drawDailyTimeAxis(Graphics2D g, ChartLayout layout, TimeRange timeRange)
+		{
+			ZoneId zone = ZoneId.systemDefault();
+			ZonedDateTime tick = Instant.ofEpochSecond(timeRange.min).atZone(zone)
+				.withMinute(0)
+				.withSecond(0)
+				.withNano(0);
+			int remainder = tick.getHour() % 3;
+			if (remainder != 0)
+			{
+				tick = tick.plusHours(3 - remainder);
+			}
+			if (tick.toEpochSecond() < timeRange.min)
+			{
+				tick = tick.plusHours(3);
+			}
+
+			g.setFont(STAT_LABEL_FONT);
+			g.setStroke(new BasicStroke(1f));
+			while (tick.toEpochSecond() <= timeRange.max)
+			{
+				int x = xForTime(tick.toEpochSecond(), timeRange, layout);
+				g.setColor(new Color(82, 82, 82));
+				g.drawLine(x, layout.volumeBottom + 2, x, layout.volumeBottom + 7);
+
+				String timeText = AXIS_TIME.format(tick).toLowerCase(Locale.US);
+				String dateText = AXIS_DATE.format(tick);
+				g.setColor(Color.LIGHT_GRAY);
+				drawCenteredAxisText(g, timeText, x, layout.volumeBottom + 20);
+				g.setColor(Color.GRAY);
+				drawCenteredAxisText(g, dateText, x, layout.volumeBottom + 35);
+				tick = tick.plusHours(3);
+			}
+		}
+
+		private void drawWeeklyTimeAxis(Graphics2D g, ChartLayout layout, TimeRange timeRange)
+		{
+			ZoneId zone = ZoneId.systemDefault();
+			ZonedDateTime tick = Instant.ofEpochSecond(timeRange.min).atZone(zone)
+				.toLocalDate()
+				.plusDays(1)
+				.atStartOfDay(zone);
+
+			g.setFont(STAT_LABEL_FONT);
+			g.setStroke(new BasicStroke(1f));
+			while (tick.toEpochSecond() <= timeRange.max)
+			{
+				int x = xForTime(tick.toEpochSecond(), timeRange, layout);
+				g.setColor(new Color(82, 82, 82));
+				g.drawLine(x, layout.volumeBottom + 2, x, layout.volumeBottom + 7);
+				g.setColor(Color.LIGHT_GRAY);
+				drawCenteredAxisText(g, AXIS_DATE.format(tick), x, layout.volumeBottom + 24);
+				tick = tick.plusDays(1);
+			}
+		}
+
+		private void drawCenteredAxisText(Graphics2D g, String text, int centerX, int baseline)
+		{
+			int textWidth = g.getFontMetrics().stringWidth(text);
+			int x = centerX - textWidth / 2;
+			x = Math.max(4, Math.min(x, getWidth() - textWidth - 4));
+			g.drawString(text, x, baseline);
+		}
+
 		private int volumeScale(List<TimeseriesPoint> priced)
 		{
 			List<Integer> volumes = new ArrayList<>();
@@ -3005,8 +3333,8 @@ public class MerchLensPanel extends PluginPanel
 				int x = xForTime(point.getTimestamp(), timeRange, layout);
 				int previousY = yForPrice(previousPrice, range, layout);
 				int y = yForPrice(price, range, layout);
-				g.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), 225));
-				g.setStroke(new BasicStroke(1.25f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+				g.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), 238));
+				g.setStroke(new BasicStroke(1.65f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
 				g.drawLine(previousX, previousY, x, y);
 			}
 		}
@@ -3020,7 +3348,7 @@ public class MerchLensPanel extends PluginPanel
 			TimeRange timeRange,
 			Color color)
 		{
-			int diameter = series.size() > 250 ? 3 : series.size() > 100 ? 4 : 5;
+			int diameter = series.size() > 325 ? 4 : 5;
 			for (TimeseriesPoint point : series)
 			{
 				int price = high ? point.getAvgHighPrice() : point.getAvgLowPrice();
@@ -3040,7 +3368,7 @@ public class MerchLensPanel extends PluginPanel
 				return;
 			}
 
-			String text = "Sparse 5m history: " + lowPoints.size() + " buy / " + highPoints.size() + " sell points";
+			String text = "Sparse " + period.intervalLabel + " history: " + lowPoints.size() + " buy / " + highPoints.size() + " sell points";
 			g.setFont(STAT_LABEL_FONT);
 			int paddingX = 7;
 			int width = g.getFontMetrics().stringWidth(text) + paddingX * 2;
@@ -3222,8 +3550,8 @@ public class MerchLensPanel extends PluginPanel
 
 		private int volumeBarWidth(ChartLayout layout, TimeRange range)
 		{
-			int fiveMinuteWidth = xForTime(range.min + EXPECTED_TIMESTEP_SECONDS, range, layout) - xForTime(range.min, range, layout);
-			return Math.max(2, Math.min(12, fiveMinuteWidth));
+			int intervalWidth = xForTime(range.min + period.intervalSeconds, range, layout) - xForTime(range.min, range, layout);
+			return Math.max(2, Math.min(12, intervalWidth));
 		}
 
 		private int yForPrice(int price, Range range, ChartLayout layout)
