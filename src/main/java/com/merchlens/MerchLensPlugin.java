@@ -18,11 +18,15 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import javax.inject.Inject;
+import javax.swing.SwingUtilities;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.GrandExchangeOfferState;
+import net.runelite.api.ItemComposition;
+import net.runelite.api.MenuAction;
 import net.runelite.api.events.GrandExchangeOfferChanged;
+import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.game.ItemManager;
@@ -41,6 +45,8 @@ import net.runelite.client.ui.overlay.tooltip.TooltipManager;
 )
 public class MerchLensPlugin extends Plugin
 {
+	private static final String MENU_OPTION_MERCH = "Merch";
+
 	@Inject
 	private ClientToolbar clientToolbar;
 
@@ -154,6 +160,64 @@ public class MerchLensPlugin extends Plugin
 			return;
 		}
 		offerTracker.record(event.getSlot(), event.getOffer());
+	}
+
+	@Subscribe
+	@SuppressWarnings("deprecation")
+	public void onMenuEntryAdded(MenuEntryAdded event)
+	{
+		if (!config.showItemMenuLookup() || event == null || event.getMenuEntry() == null)
+		{
+			return;
+		}
+
+		MenuAction type = event.getMenuEntry().getType();
+		if (type != MenuAction.EXAMINE_ITEM && type != MenuAction.EXAMINE_ITEM_GROUND)
+		{
+			return;
+		}
+
+		int itemId = type == MenuAction.EXAMINE_ITEM_GROUND ? event.getIdentifier() : event.getItemId();
+		if (itemId <= 0 && event.getMenuEntry().getWidget() != null)
+		{
+			itemId = event.getMenuEntry().getWidget().getItemId();
+		}
+		if (itemId <= 0)
+		{
+			itemId = event.getIdentifier();
+		}
+		itemId = itemManager.canonicalize(itemId);
+		if (itemId <= 0)
+		{
+			return;
+		}
+
+		ItemComposition composition = itemManager.getItemComposition(itemId);
+		if (composition == null || composition.getName() == null || composition.getName().trim().isEmpty())
+		{
+			return;
+		}
+
+		int lookupItemId = itemId;
+		String lookupName = composition.getName();
+		client.getMenu().createMenuEntry(-1)
+			.setOption(MENU_OPTION_MERCH)
+			.setTarget(event.getTarget())
+			.setType(MenuAction.RUNELITE)
+			.onClick(entry -> openLookupFromMenu(lookupItemId, lookupName));
+	}
+
+	private void openLookupFromMenu(int itemId, String itemName)
+	{
+		SwingUtilities.invokeLater(() -> {
+			MerchLensPanel currentPanel = panel;
+			if (currentPanel == null || navigationButton == null)
+			{
+				return;
+			}
+			clientToolbar.openPanel(navigationButton);
+			currentPanel.lookupItem(itemId, itemName);
+		});
 	}
 
 	private void refreshRecommendations()

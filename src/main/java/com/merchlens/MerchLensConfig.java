@@ -18,6 +18,16 @@ public interface MerchLensConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "showItemMenuLookup",
+		name = "Show item Merch option",
+		description = "Add a Merch option to item right-click menus for quick lookup."
+	)
+	default boolean showItemMenuLookup()
+	{
+		return true;
+	}
+
+	@ConfigItem(
 		keyName = "budget",
 		name = "Bank size",
 		description = "Maximum GP price per item to show in recommendations.",

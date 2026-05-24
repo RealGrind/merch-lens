@@ -534,6 +534,18 @@ public class MerchLensPanel extends PluginPanel
 		});
 	}
 
+	public void lookupItem(int itemId, String itemName)
+	{
+		SwingUtilities.invokeLater(() -> {
+			searchPopup.setVisible(false);
+			selectingSearchSuggestion = true;
+			searchField.setText(itemName == null ? Integer.toString(itemId) : itemName);
+			selectingSearchSuggestion = false;
+			setSearchInlineMessage(null, Color.LIGHT_GRAY);
+			searchCallback.accept(Integer.toString(itemId));
+		});
+	}
+
 	private void renderCurrent()
 	{
 		int scrollValue = currentScrollValue();

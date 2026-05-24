@@ -15,6 +15,8 @@ import java.util.Locale;
 import net.runelite.api.Client;
 import net.runelite.api.ItemComposition;
 import net.runelite.api.Point;
+import net.runelite.api.widgets.ComponentID;
+import net.runelite.api.widgets.Widget;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.ui.overlay.Overlay;
 import net.runelite.client.ui.overlay.OverlayLayer;
@@ -29,13 +31,28 @@ class GeOfferOverlay extends Overlay
 	private static final NumberFormat QUANTITY = NumberFormat.getIntegerInstance(Locale.US);
 	private static final Font HEADER_FONT = new Font(Font.SANS_SERIF, Font.BOLD, 11);
 	private static final Font BODY_FONT = new Font(Font.SANS_SERIF, Font.PLAIN, 11);
+	private static final Font COMPACT_HEADER_FONT = new Font(Font.SANS_SERIF, Font.BOLD, 10);
+	private static final Font COMPACT_BODY_FONT = new Font(Font.SANS_SERIF, Font.PLAIN, 10);
 	private static final int MAX_CARD_WIDTH = 98;
 	private static final int MIN_CARD_WIDTH = 78;
-	private static final int CARD_HEIGHT = 72;
+	private static final int CARD_HEIGHT = 90;
+	private static final int MAX_COMPACT_CARD_WIDTH = 68;
+	private static final int MIN_COMPACT_CARD_WIDTH = 54;
+	private static final int COMPACT_CARD_HEIGHT = 74;
 	private static final int CARD_GAP = 4;
 	private static final int MAX_ICON_SIZE = 30;
 	private static final int MIN_ICON_SIZE = 24;
+	private static final int COMPACT_ICON_SIZE = 22;
 	private static final int CANVAS_PADDING = 8;
+	private static final int MINIMAP_GAP = 8;
+	private static final int FIXED_HUD_FALLBACK_WIDTH = 215;
+	private static final int[] TOP_RIGHT_HUD_COMPONENTS = {
+		ComponentID.FIXED_VIEWPORT_MINIMAP,
+		ComponentID.RESIZABLE_VIEWPORT_MINIMAP,
+		ComponentID.RESIZABLE_VIEWPORT_MINIMAP_ORB_HOLDER,
+		ComponentID.RESIZABLE_VIEWPORT_BOTTOM_LINE_MINIMAP,
+		ComponentID.RESIZABLE_VIEWPORT_BOTTOM_LINE_MINIMAP_ORB_HOLDER
+	};
 	private static final Color BUY_COLOR = new Color(94, 166, 255);
 	private static final Color SELL_COLOR = new Color(255, 157, 67);
 	private static final Color COMPLETE_COLOR = new Color(83, 227, 139);
@@ -81,10 +98,10 @@ class GeOfferOverlay extends Overlay
 			int row = i / layout.columns;
 			int column = i % layout.columns;
 			int x = column * (layout.cardWidth + CARD_GAP);
-			int y = row * (CARD_HEIGHT + CARD_GAP);
+			int y = row * (layout.cardHeight + CARD_GAP);
 			TrackedOffer offer = offers.get(i);
-			drawOffer(graphics, offer, x, y, layout.cardWidth);
-			addTooltipIfHovered(offer, x, y, layout.cardWidth);
+			drawOffer(graphics, offer, x, y, layout);
+			addTooltipIfHovered(offer, x, y, layout);
 		}
 		return new Dimension(layout.width, layout.height);
 	}
@@ -92,32 +109,76 @@ class GeOfferOverlay extends Overlay
 	private Layout layout(int offerCount)
 	{
 		int canvasWidth = Math.max(MIN_CARD_WIDTH, client.getCanvasWidth() - CANVAS_PADDING);
-		int columns = Math.min(offerCount, Math.max(1, (canvasWidth + CARD_GAP) / (MIN_CARD_WIDTH + CARD_GAP)));
-		int cardWidth = Math.min(MAX_CARD_WIDTH, Math.max(MIN_CARD_WIDTH, (canvasWidth - (columns - 1) * CARD_GAP) / columns));
-		int rows = (offerCount + columns - 1) / columns;
-		int width = columns * cardWidth + Math.max(0, columns - 1) * CARD_GAP;
-		int height = rows * CARD_HEIGHT + Math.max(0, rows - 1) * CARD_GAP;
-		return new Layout(columns, cardWidth, width, height);
+		Layout normal = layoutWithin(offerCount, canvasWidth, MIN_CARD_WIDTH, MAX_CARD_WIDTH, CARD_HEIGHT, false);
+		Rectangle reservedHud = topRightHudBounds();
+		int normalRight = (client.getCanvasWidth() + normal.width) / 2;
+		if (reservedHud == null || normalRight + MINIMAP_GAP <= reservedHud.x)
+		{
+			setPosition(OverlayPosition.TOP_CENTER);
+			return normal;
+		}
+
+		int safeWidth = Math.max(MIN_COMPACT_CARD_WIDTH, reservedHud.x - CANVAS_PADDING - MINIMAP_GAP);
+		setPosition(OverlayPosition.TOP_LEFT);
+		return layoutWithin(offerCount, safeWidth, MIN_COMPACT_CARD_WIDTH, MAX_COMPACT_CARD_WIDTH, COMPACT_CARD_HEIGHT, true);
 	}
 
-	private void drawOffer(Graphics2D graphics, TrackedOffer offer, int x, int y, int cardWidth)
+	private Layout layoutWithin(int offerCount, int availableWidth, int minCardWidth, int maxCardWidth, int cardHeight, boolean compact)
 	{
+		int columns = Math.min(offerCount, Math.max(1, (availableWidth + CARD_GAP) / (minCardWidth + CARD_GAP)));
+		int cardWidth = Math.min(maxCardWidth, Math.max(minCardWidth, (availableWidth - (columns - 1) * CARD_GAP) / columns));
+		int rows = (offerCount + columns - 1) / columns;
+		int width = columns * cardWidth + Math.max(0, columns - 1) * CARD_GAP;
+		int height = rows * cardHeight + Math.max(0, rows - 1) * CARD_GAP;
+		return new Layout(columns, cardWidth, cardHeight, width, height, compact);
+	}
+
+	private Rectangle topRightHudBounds()
+	{
+		Rectangle reserved = null;
+		for (int componentId : TOP_RIGHT_HUD_COMPONENTS)
+		{
+			Widget widget = client.getWidget(componentId);
+			if (widget == null || widget.isHidden())
+			{
+				continue;
+			}
+			Rectangle bounds = widget.getBounds();
+			if (bounds.width <= 0 || bounds.height <= 0 || bounds.y > CARD_HEIGHT)
+			{
+				continue;
+			}
+			reserved = reserved == null ? new Rectangle(bounds) : reserved.union(bounds);
+		}
+		if (reserved == null && !client.isResized())
+		{
+			int x = Math.max(MIN_COMPACT_CARD_WIDTH, client.getCanvasWidth() - FIXED_HUD_FALLBACK_WIDTH);
+			return new Rectangle(x, 0, client.getCanvasWidth() - x, CARD_HEIGHT);
+		}
+		return reserved;
+	}
+
+	private void drawOffer(Graphics2D graphics, TrackedOffer offer, int x, int y, Layout layout)
+	{
+		int cardWidth = layout.cardWidth;
+		int cardHeight = layout.cardHeight;
 		Color accent = accentColor(offer.getState());
 		graphics.setColor(new Color(18, 18, 18, 214));
-		graphics.fillRoundRect(x, y, cardWidth, CARD_HEIGHT, 6, 6);
+		graphics.fillRoundRect(x, y, cardWidth, cardHeight, 6, 6);
 		graphics.setColor(new Color(accent.getRed(), accent.getGreen(), accent.getBlue(), 178));
 		graphics.setStroke(new BasicStroke(1.2f));
-		graphics.drawRoundRect(x, y, cardWidth - 1, CARD_HEIGHT - 1, 6, 6);
+		graphics.drawRoundRect(x, y, cardWidth - 1, cardHeight - 1, 6, 6);
 
-		graphics.setFont(HEADER_FONT);
+		graphics.setFont(layout.compact ? COMPACT_HEADER_FONT : HEADER_FONT);
 		graphics.setColor(Color.LIGHT_GRAY);
-		graphics.drawString("GE " + (offer.getSlot() + 1), x + 6, y + 13);
-		drawRightText(graphics, stateText(offer.getState()), x + cardWidth - 6, y + 13, accent);
+		int headerPadding = layout.compact ? 4 : 6;
+		graphics.drawString((layout.compact ? "GE" : "GE ") + (offer.getSlot() + 1), x + headerPadding, y + 13);
+		drawRightText(graphics, stateText(offer.getState()), x + cardWidth - headerPadding, y + 13, accent);
 
 		AsyncBufferedImage image = itemManager.getImage(offer.getItemId());
-		int iconSize = Math.min(MAX_ICON_SIZE, Math.max(MIN_ICON_SIZE, cardWidth / 3));
+		int iconSize = layout.compact ? COMPACT_ICON_SIZE : Math.min(MAX_ICON_SIZE, Math.max(MIN_ICON_SIZE, cardWidth / 3));
 		int iconX = x + (cardWidth - iconSize) / 2;
-		int iconY = y + 19;
+		int iconY = y + (layout.compact ? 17 : 20);
 		int plate = iconSize + 8;
 		int plateX = x + (cardWidth - plate) / 2;
 		int plateY = iconY - 4;
@@ -129,12 +190,19 @@ class GeOfferOverlay extends Overlay
 		graphics.drawRoundRect(plateX, plateY, plate - 1, plate - 1, 5, 5);
 		graphics.drawImage(image, iconX, iconY, iconSize, iconSize, null);
 
-		graphics.setFont(BODY_FONT);
-		drawCenteredText(graphics, quantityText(offer), x + cardWidth / 2, y + 57, Color.WHITE);
-		drawCenteredText(graphics, trackedText(offer), x + cardWidth / 2, y + 68, offer.isTrackedStartKnown() ? Color.LIGHT_GRAY : CANCELLED_COLOR);
+		graphics.setColor(new Color(76, 76, 76, 120));
+		graphics.setStroke(new BasicStroke(1f));
+		int dividerY = layout.compact ? y + 47 : y + 61;
+		graphics.drawLine(x + headerPadding, dividerY, x + cardWidth - headerPadding, dividerY);
+
+		graphics.setFont(layout.compact ? COMPACT_BODY_FONT : BODY_FONT);
+		drawCenteredText(graphics, layout.compact ? smallQuantityText(offer) : compactQuantityText(offer),
+			x + cardWidth / 2, y + (layout.compact ? 60 : 74), Color.WHITE);
+		drawCenteredText(graphics, trackedText(offer), x + cardWidth / 2, y + (layout.compact ? 71 : 86),
+			offer.isTrackedStartKnown() ? Color.LIGHT_GRAY : CANCELLED_COLOR);
 	}
 
-	private void addTooltipIfHovered(TrackedOffer offer, int x, int y, int cardWidth)
+	private void addTooltipIfHovered(TrackedOffer offer, int x, int y, Layout layout)
 	{
 		Point mouse = client.getMouseCanvasPosition();
 		Rectangle bounds = getBounds();
@@ -145,11 +213,11 @@ class GeOfferOverlay extends Overlay
 
 		int localX = mouse.getX() - bounds.x;
 		int localY = mouse.getY() - bounds.y;
-		if (localX >= x && localX <= x + cardWidth && localY >= y && localY <= y + CARD_HEIGHT)
+		if (localX >= x && localX <= x + layout.cardWidth && localY >= y && localY <= y + layout.cardHeight)
 		{
 			tooltipManager.add(new Tooltip(itemName(offer.getItemId())
 				+ "<br>GE " + (offer.getSlot() + 1) + " " + stateText(offer.getState())
-				+ "<br>" + quantityText(offer) + " - " + trackedText(offer)));
+				+ "<br>" + exactQuantityText(offer) + " - " + trackedText(offer)));
 		}
 	}
 
@@ -163,7 +231,63 @@ class GeOfferOverlay extends Overlay
 		return "Item " + itemId;
 	}
 
-	private String quantityText(TrackedOffer offer)
+	private String compactQuantityText(TrackedOffer offer)
+	{
+		return compactQuantity(Math.max(0, offer.getFilledQuantity()))
+			+ " / "
+			+ compactQuantity(Math.max(0, offer.getTotalQuantity()));
+	}
+
+	private String smallQuantityText(TrackedOffer offer)
+	{
+		return smallQuantity(Math.max(0, offer.getFilledQuantity()))
+			+ "/"
+			+ smallQuantity(Math.max(0, offer.getTotalQuantity()));
+	}
+
+	private String compactQuantity(int quantity)
+	{
+		if (quantity >= 1_000_000_000)
+		{
+			return String.format(Locale.US, "%.1fb", quantity / 1_000_000_000.0);
+		}
+		if (quantity >= 1_000_000)
+		{
+			return String.format(Locale.US, "%.1fm", quantity / 1_000_000.0);
+		}
+		if (quantity >= 1_000)
+		{
+			return String.format(Locale.US, "%.1fk", quantity / 1_000.0);
+		}
+		return QUANTITY.format(quantity);
+	}
+
+	private String smallQuantity(int quantity)
+	{
+		if (quantity >= 1_000_000_000)
+		{
+			return abbreviatedQuantity(quantity, 1_000_000_000.0, "b");
+		}
+		if (quantity >= 1_000_000)
+		{
+			return abbreviatedQuantity(quantity, 1_000_000.0, "m");
+		}
+		if (quantity >= 1_000)
+		{
+			return abbreviatedQuantity(quantity, 1_000.0, "k");
+		}
+		return QUANTITY.format(quantity);
+	}
+
+	private String abbreviatedQuantity(int quantity, double unit, String suffix)
+	{
+		double value = quantity / unit;
+		return value == Math.rint(value)
+			? String.format(Locale.US, "%.0f%s", value, suffix)
+			: String.format(Locale.US, "%.1f%s", value, suffix);
+	}
+
+	private String exactQuantityText(TrackedOffer offer)
 	{
 		return QUANTITY.format(Math.max(0, offer.getFilledQuantity()))
 			+ " / "
@@ -251,15 +375,19 @@ class GeOfferOverlay extends Overlay
 	{
 		private final int columns;
 		private final int cardWidth;
+		private final int cardHeight;
 		private final int width;
 		private final int height;
+		private final boolean compact;
 
-		private Layout(int columns, int cardWidth, int width, int height)
+		private Layout(int columns, int cardWidth, int cardHeight, int width, int height, boolean compact)
 		{
 			this.columns = columns;
 			this.cardWidth = cardWidth;
+			this.cardHeight = cardHeight;
 			this.width = width;
 			this.height = height;
+			this.compact = compact;
 		}
 	}
 }
