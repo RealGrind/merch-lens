@@ -27,6 +27,7 @@ import net.runelite.api.ItemComposition;
 import net.runelite.api.MenuAction;
 import net.runelite.api.events.GrandExchangeOfferChanged;
 import net.runelite.api.events.MenuEntryAdded;
+import net.runelite.api.widgets.Widget;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.game.ItemManager;
@@ -46,6 +47,7 @@ import net.runelite.client.ui.overlay.tooltip.TooltipManager;
 public class MerchLensPlugin extends Plugin
 {
 	private static final String MENU_OPTION_MERCH = "Merch";
+	private static final int SCREENER_TREND_BATCH_SIZE = 18;
 
 	@Inject
 	private ClientToolbar clientToolbar;
@@ -82,6 +84,10 @@ public class MerchLensPlugin extends Plugin
 	private volatile long refreshSequence;
 	private volatile long chartSequence;
 	private final Set<Integer> visibleTrendWarmInFlight = Collections.synchronizedSet(new HashSet<>());
+	private final Object screenerTrendScanLock = new Object();
+	private volatile long screenerTrendScanSequence;
+	private String runningScreenerTrendScanKey;
+	private String completedScreenerTrendScanKey;
 
 	@Provides
 	MerchLensConfig provideConfig(ConfigManager configManager)
@@ -104,6 +110,8 @@ public class MerchLensPlugin extends Plugin
 			this::toggleFavorite,
 			this::showChart,
 			this::warmVisibleTrendSignals,
+			this::scanScreenerTrends,
+			this::cancelScreenerTrendScan,
 			this::updateBankSize,
 			config.budget(),
 			this::updateScreenerFilters,
@@ -129,6 +137,7 @@ public class MerchLensPlugin extends Plugin
 	@Override
 	protected void shutDown()
 	{
+		cancelScreenerTrendScan();
 		if (geOfferOverlay != null)
 		{
 			overlayManager.remove(geOfferOverlay);
@@ -172,7 +181,8 @@ public class MerchLensPlugin extends Plugin
 		}
 
 		MenuAction type = event.getMenuEntry().getType();
-		if (type != MenuAction.EXAMINE_ITEM && type != MenuAction.EXAMINE_ITEM_GROUND)
+		boolean widgetItemExamine = type == MenuAction.CC_OP_LOW_PRIORITY && "Examine".equals(event.getOption());
+		if (type != MenuAction.EXAMINE_ITEM && type != MenuAction.EXAMINE_ITEM_GROUND && !widgetItemExamine)
 		{
 			return;
 		}
@@ -181,6 +191,12 @@ public class MerchLensPlugin extends Plugin
 		if (itemId <= 0 && event.getMenuEntry().getWidget() != null)
 		{
 			itemId = event.getMenuEntry().getWidget().getItemId();
+		}
+		if (itemId <= 0 && widgetItemExamine)
+		{
+			Widget container = client.getWidget(event.getActionParam1());
+			Widget item = container == null ? null : container.getChild(event.getActionParam0());
+			itemId = item == null ? itemId : item.getItemId();
 		}
 		if (itemId <= 0)
 		{
@@ -228,6 +244,7 @@ public class MerchLensPlugin extends Plugin
 			return;
 		}
 
+		cancelScreenerTrendScan();
 		currentPanel.showLoading();
 		long sequence = ++refreshSequence;
 		// Network work stays off the client thread. The result is marshalled back through Swing in the panel.
@@ -333,6 +350,145 @@ public class MerchLensPlugin extends Plugin
 		}, "merch-lens-visible-trends");
 		worker.setDaemon(true);
 		worker.start();
+	}
+
+	private void scanScreenerTrends(List<RecommendationDto> recommendations)
+	{
+		MerchLensPanel currentPanel = panel;
+		if (currentPanel == null || recommendations == null)
+		{
+			return;
+		}
+
+		List<RecommendationDto> candidates = new ArrayList<>(recommendations);
+		String scanKey = screenerTrendScanKey(candidates);
+		long scanSequence;
+		synchronized (screenerTrendScanLock)
+		{
+			if (scanKey.equals(runningScreenerTrendScanKey))
+			{
+				return;
+			}
+			if (scanKey.equals(completedScreenerTrendScanKey))
+			{
+				currentPanel.showScreenerTrendProgress(candidates.size(), candidates.size(), true);
+				return;
+			}
+			runningScreenerTrendScanKey = scanKey;
+			scanSequence = ++screenerTrendScanSequence;
+		}
+
+		List<RecommendationDto> missing = new ArrayList<>();
+		for (RecommendationDto recommendation : candidates)
+		{
+			if (recommendation != null && needsTrendScan(recommendation))
+			{
+				missing.add(recommendation);
+			}
+		}
+		int checked = candidates.size() - missing.size();
+		currentPanel.showScreenerTrendProgress(checked, candidates.size(), missing.isEmpty());
+		if (missing.isEmpty())
+		{
+			completeScreenerTrendScan(scanSequence, scanKey);
+			return;
+		}
+
+		long refreshAtStart = refreshSequence;
+		Thread worker = new Thread(() -> {
+			int completed = checked;
+			try
+			{
+				for (int start = 0; start < missing.size(); start += SCREENER_TREND_BATCH_SIZE)
+				{
+					if (!isCurrentScreenerTrendScan(scanSequence, scanKey, refreshAtStart, currentPanel))
+					{
+						return;
+					}
+					int end = Math.min(start + SCREENER_TREND_BATCH_SIZE, missing.size());
+					wikiMarketClient.warmHistoricalSignals(new ArrayList<>(missing.subList(start, end)));
+					completed += end - start;
+					if (isCurrentScreenerTrendScan(scanSequence, scanKey, refreshAtStart, currentPanel))
+					{
+						currentPanel.showScreenerTrendProgress(completed, candidates.size(), false);
+					}
+				}
+				if (!isCurrentScreenerTrendScan(scanSequence, scanKey, refreshAtStart, currentPanel))
+				{
+					return;
+				}
+				SignalResponse refreshed = loadSignals();
+				if (isCurrentScreenerTrendScan(scanSequence, scanKey, refreshAtStart, currentPanel))
+				{
+					completeScreenerTrendScan(scanSequence, scanKey);
+					currentPanel.showRecommendations(refreshed);
+					currentPanel.showScreenerTrendProgress(candidates.size(), candidates.size(), true);
+				}
+			}
+			catch (Exception ex)
+			{
+				log.debug("Unable to complete Merch Lens Screener trend scan", ex);
+			}
+		}, "merch-lens-screener-trends");
+		worker.setDaemon(true);
+		worker.start();
+	}
+
+	private boolean needsTrendScan(RecommendationDto recommendation)
+	{
+		return recommendation.getMarketState() == null || "UNKNOWN".equals(recommendation.getMarketState());
+	}
+
+	private String screenerTrendScanKey(List<RecommendationDto> recommendations)
+	{
+		List<Integer> itemIds = new ArrayList<>();
+		for (RecommendationDto recommendation : recommendations)
+		{
+			if (recommendation != null)
+			{
+				itemIds.add(recommendation.getItemId());
+			}
+		}
+		Collections.sort(itemIds);
+		StringBuilder key = new StringBuilder();
+		for (Integer itemId : itemIds)
+		{
+			key.append(itemId).append(',');
+		}
+		return key.toString();
+	}
+
+	private boolean isCurrentScreenerTrendScan(long scanSequence, String scanKey, long refreshAtStart, MerchLensPanel currentPanel)
+	{
+		synchronized (screenerTrendScanLock)
+		{
+			return panel == currentPanel
+				&& refreshSequence == refreshAtStart
+				&& screenerTrendScanSequence == scanSequence
+				&& scanKey.equals(runningScreenerTrendScanKey);
+		}
+	}
+
+	private void completeScreenerTrendScan(long scanSequence, String scanKey)
+	{
+		synchronized (screenerTrendScanLock)
+		{
+			if (screenerTrendScanSequence == scanSequence && scanKey.equals(runningScreenerTrendScanKey))
+			{
+				runningScreenerTrendScanKey = null;
+				completedScreenerTrendScanKey = scanKey;
+			}
+		}
+	}
+
+	private void cancelScreenerTrendScan()
+	{
+		synchronized (screenerTrendScanLock)
+		{
+			screenerTrendScanSequence++;
+			runningScreenerTrendScanKey = null;
+			completedScreenerTrendScanKey = null;
+		}
 	}
 
 	private boolean isCurrentRefresh(long sequence, MerchLensPanel currentPanel)

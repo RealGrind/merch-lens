@@ -19,8 +19,8 @@ public interface MerchLensConfig extends Config
 
 	@ConfigItem(
 		keyName = "showItemMenuLookup",
-		name = "Show item Merch option",
-		description = "Add a Merch option to item right-click menus for quick lookup."
+		name = "Right-click Merch lookup",
+		description = "Show a 'Merch' option when right-clicking items to open them in Merch Lens."
 	)
 	default boolean showItemMenuLookup()
 	{

@@ -101,18 +101,18 @@ public class MerchLensPanel extends PluginPanel
 	private static final int PAGE_ROW_HEIGHT = 30;
 	private static final int FILTER_CONTROLS_HEIGHT = 58;
 	private static final int SCREENER_CONTROLS_HEIGHT = 176;
+	private static final int SCREENER_PROGRESS_HEIGHT = 24;
 	private static final int STAPLE_CONTROLS_HEIGHT = 86;
 	private static final int HEART_BUTTON_SIZE = 22;
 	private static final int CLEAR_BUTTON_SIZE = 22;
 	private static final int TITLE_TEXT_WIDTH = TEXT_WIDTH - ITEM_ICON_SIZE - HEART_BUTTON_SIZE - 16;
 	private static final int OUTDATED_PRICE_MINUTES = 10;
 	private static final int RECOMMENDATION_PAGE_SIZE = 5;
-	private static final int SCREENER_TREND_WARMUP_LIMIT = 48;
 	private static final int SEARCH_MIN_QUERY_LENGTH = 1;
 	private static final int SEARCH_SUGGESTION_LIMIT = 80;
 	private static final int SEARCH_SUGGESTION_HEIGHT = 220;
 	private static final String[] STAPLE_TYPES = HighVolumeItemCatalog.categories();
-	private static final String[] STAPLE_SORTS = {"4h P&L", "ROI", "Buy price", "Margin each", "Vol/hr"};
+	private static final String[] STAPLE_SORTS = {"Flow P&L", "Limit P&L", "ROI", "Buy price", "Margin each", "Vol/hr"};
 	private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("h:mm a", Locale.US)
 		.withZone(ZoneId.systemDefault());
 
@@ -121,6 +121,8 @@ public class MerchLensPanel extends PluginPanel
 	private final Consumer<Integer> favoriteCallback;
 	private final BiConsumer<RecommendationDto, ChartPeriod> chartCallback;
 	private final Consumer<List<RecommendationDto>> visibleTrendCallback;
+	private final Consumer<List<RecommendationDto>> screenerTrendScanCallback;
+	private final Runnable screenerTrendCancelCallback;
 	private final Consumer<Integer> bankSizeCallback;
 	private final Consumer<ScreenerFilters> screenerFiltersCallback;
 	private final ItemManager itemManager;
@@ -142,6 +144,8 @@ public class MerchLensPanel extends PluginPanel
 	private final JTextField screenerMinSellVolumeField = new JTextField();
 	private final JTextField screenerBuySellRatioField = new JTextField();
 	private final JLabel searchInlineMessage = new JLabel(" ");
+	private final JLabel screenerTrendProgress = new JLabel(" ");
+	private JLabel screenerPaginationLabel;
 	private final JPopupMenu searchPopup = new JPopupMenu();
 	private JScrollPane scrollPane;
 	private JFrame dailyChartFrame;
@@ -174,6 +178,12 @@ public class MerchLensPanel extends PluginPanel
 	private int screenerMinBuyVolume;
 	private int screenerMinSellVolume;
 	private double screenerBuySellRatio;
+	private boolean screenerTrendScanInProgress;
+	private boolean screenerTrendScanComplete;
+	private int screenerTrendChecked;
+	private int screenerTrendTotal;
+	private int renderedScreenerTotal;
+	private int renderedScreenerMaxPage;
 
 	public enum ChartPeriod
 	{
@@ -248,6 +258,8 @@ public class MerchLensPanel extends PluginPanel
 		Consumer<Integer> favoriteCallback,
 		BiConsumer<RecommendationDto, ChartPeriod> chartCallback,
 		Consumer<List<RecommendationDto>> visibleTrendCallback,
+		Consumer<List<RecommendationDto>> screenerTrendScanCallback,
+		Runnable screenerTrendCancelCallback,
 		Consumer<Integer> bankSizeCallback,
 		int bankSize,
 		Consumer<ScreenerFilters> screenerFiltersCallback,
@@ -264,6 +276,8 @@ public class MerchLensPanel extends PluginPanel
 		this.favoriteCallback = favoriteCallback;
 		this.chartCallback = chartCallback;
 		this.visibleTrendCallback = visibleTrendCallback;
+		this.screenerTrendScanCallback = screenerTrendScanCallback;
+		this.screenerTrendCancelCallback = screenerTrendCancelCallback;
 		this.bankSizeCallback = bankSizeCallback;
 		this.bankSize = Math.max(1, bankSize);
 		this.screenerFiltersCallback = screenerFiltersCallback;
@@ -372,6 +386,9 @@ public class MerchLensPanel extends PluginPanel
 		searchInlineMessage.setFont(STAT_LABEL_FONT);
 		searchInlineMessage.setForeground(Color.LIGHT_GRAY);
 		searchInlineMessage.setAlignmentX(LEFT_ALIGNMENT);
+		screenerTrendProgress.setFont(STAT_LABEL_FONT);
+		screenerTrendProgress.setForeground(Color.LIGHT_GRAY);
+		screenerTrendProgress.setAlignmentX(Component.CENTER_ALIGNMENT);
 		bankSizeField.setFont(BODY_FONT);
 		bankSizeField.setHorizontalAlignment(JTextField.RIGHT);
 		bankSizeField.setText(GP.format(this.bankSize));
@@ -431,7 +448,10 @@ public class MerchLensPanel extends PluginPanel
 
 	public void showLoading()
 	{
-		SwingUtilities.invokeLater(() -> status.setText("Loading market recommendations..."));
+		SwingUtilities.invokeLater(() -> {
+			resetScreenerTrendProgress();
+			status.setText("Loading market recommendations...");
+		});
 	}
 
 	public void showError(String message)
@@ -526,6 +546,18 @@ public class MerchLensPanel extends PluginPanel
 		});
 	}
 
+	public void showScreenerTrendProgress(int checked, int total, boolean complete)
+	{
+		SwingUtilities.invokeLater(() -> {
+			screenerTrendChecked = Math.max(0, Math.min(checked, total));
+			screenerTrendTotal = Math.max(0, total);
+			screenerTrendScanComplete = complete;
+			screenerTrendScanInProgress = !complete;
+			updateScreenerTrendProgressText();
+			updateScreenerPaginationText();
+		});
+	}
+
 	public void setSearchItems(List<ItemSearchResult> items)
 	{
 		SwingUtilities.invokeLater(() -> {
@@ -594,9 +626,9 @@ public class MerchLensPanel extends PluginPanel
 			int maxPage = Math.max(0, (staples.size() - 1) / RECOMMENDATION_PAGE_SIZE);
 			staplesPage = Math.min(staplesPage, maxPage);
 			List<RecommendationDto> broaderCandidates = new ArrayList<>(recommendations);
-			List<RecommendationDto> broaderWarmupCandidates = screenerTrendWarmupCandidates(broaderCandidates);
-			List<RecommendationDto> broader = applyScreenerFilters(broaderCandidates);
-			boolean broaderCheckingTrends = stablePricesOnly && hasMissingTrend(broaderWarmupCandidates);
+			List<RecommendationDto> broaderBaseCandidates = screenerBaseFilterCandidates(broaderCandidates);
+			List<RecommendationDto> broader = applyStableScreenerFilter(broaderBaseCandidates);
+			boolean broaderCheckingTrends = stablePricesOnly && (screenerTrendScanInProgress || hasMissingTrend(broaderBaseCandidates));
 			int broaderMaxPage = Math.max(0, (broader.size() - 1) / RECOMMENDATION_PAGE_SIZE);
 			broaderPage = Math.min(broaderPage, broaderMaxPage);
 
@@ -660,7 +692,8 @@ public class MerchLensPanel extends PluginPanel
 
 			content.revalidate();
 			content.repaint();
-		requestVisibleTrendWarmup(trendWarmupCandidates(visibleRecommendations, favoriteCandidates, stapleCandidates, broaderWarmupCandidates));
+		requestVisibleTrendWarmup(trendWarmupCandidates(visibleRecommendations, favoriteCandidates, stapleCandidates));
+		requestScreenerTrendScan(broaderBaseCandidates);
 		bindWheelScrolling(pinnedContent);
 		bindWheelScrolling(content);
 	}
@@ -668,8 +701,7 @@ public class MerchLensPanel extends PluginPanel
 	private List<RecommendationDto> trendWarmupCandidates(
 		List<RecommendationDto> visibleRecommendations,
 		List<RecommendationDto> favoriteCandidates,
-		List<RecommendationDto> stapleCandidates,
-		List<RecommendationDto> broaderCandidates)
+		List<RecommendationDto> stapleCandidates)
 	{
 		List<RecommendationDto> candidates = new ArrayList<>();
 		Set<Integer> seen = new HashSet<>();
@@ -685,10 +717,6 @@ public class MerchLensPanel extends PluginPanel
 		else if (highVolumeExpanded)
 		{
 			addWarmupCandidates(candidates, seen, stapleCandidates);
-		}
-		else if (broaderExpanded)
-		{
-			addWarmupCandidates(candidates, seen, broaderCandidates);
 		}
 		return candidates;
 	}
@@ -722,6 +750,15 @@ public class MerchLensPanel extends PluginPanel
 		{
 			visibleTrendCallback.accept(missingTrend);
 		}
+	}
+
+	private void requestScreenerTrendScan(List<RecommendationDto> recommendations)
+	{
+		if (!broaderExpanded || !stablePricesOnly || screenerTrendScanCallback == null)
+		{
+			return;
+		}
+		screenerTrendScanCallback.accept(recommendations);
 	}
 
 	private boolean needsTrendWarmup(RecommendationDto recommendation)
@@ -792,6 +829,8 @@ public class MerchLensPanel extends PluginPanel
 			}
 			else if (broaderExpanded)
 			{
+				renderedScreenerTotal = broaderTotal;
+				renderedScreenerMaxPage = broaderMaxPage;
 				pinnedContent.add(pinnedHelp("Profitable items matching filters."));
 				pinnedContent.add(filterControls());
 				pinnedContent.add(screenerControls());
@@ -799,6 +838,7 @@ public class MerchLensPanel extends PluginPanel
 					broaderTotal,
 					broaderMaxPage,
 					broaderPage,
+					stablePricesOnly && !screenerTrendScanComplete,
 					() -> {
 						int updatedPage = Math.max(0, broaderPage - 1);
 						if (updatedPage != broaderPage)
@@ -977,7 +1017,7 @@ public class MerchLensPanel extends PluginPanel
 		panel.setOpaque(false);
 		panel.setBorder(BorderFactory.createEmptyBorder(0, 0, 6, 0));
 		panel.setAlignmentX(LEFT_ALIGNMENT);
-		fixedHeight(panel, SCREENER_CONTROLS_HEIGHT);
+		fixedHeight(panel, SCREENER_CONTROLS_HEIGHT + (stablePricesOnly ? SCREENER_PROGRESS_HEIGHT : 0));
 		panel.add(screenerFilterRow("Min price", screenerMinPriceField));
 		panel.add(Box.createVerticalStrut(4));
 		panel.add(screenerFilterRow("Max price", screenerMaxPriceField));
@@ -989,6 +1029,13 @@ public class MerchLensPanel extends PluginPanel
 		panel.add(screenerFilterRow("B/S ratio", screenerBuySellRatioField));
 		panel.add(Box.createVerticalStrut(6));
 		panel.add(screenerButtonRow());
+		if (stablePricesOnly)
+		{
+			panel.add(Box.createVerticalStrut(5));
+			updateScreenerTrendProgressText();
+			fixedSize(screenerTrendProgress, CONTROL_WIDTH, 18);
+			panel.add(screenerTrendProgress);
+		}
 		return panel;
 	}
 
@@ -1181,6 +1228,7 @@ public class MerchLensPanel extends PluginPanel
 		screenerMinSellVolume = minSellVolume;
 		screenerBuySellRatio = buySellRatio;
 		broaderPage = 0;
+		resetScreenerTrendProgress();
 		syncScreenerFields();
 		screenerFiltersCallback.accept(new ScreenerFilters(
 			screenerMinPrice,
@@ -1208,6 +1256,7 @@ public class MerchLensPanel extends PluginPanel
 		screenerMinSellVolume = 0;
 		screenerBuySellRatio = 0;
 		broaderPage = 0;
+		resetScreenerTrendProgress();
 		syncScreenerFields();
 		if (changed)
 		{
@@ -1226,6 +1275,48 @@ public class MerchLensPanel extends PluginPanel
 		screenerMinBuyVolumeField.setText(formatOptionalInt(screenerMinBuyVolume));
 		screenerMinSellVolumeField.setText(formatOptionalInt(screenerMinSellVolume));
 		screenerBuySellRatioField.setText(formatOptionalRatio(screenerBuySellRatio));
+	}
+
+	private void resetScreenerTrendProgress()
+	{
+		screenerTrendScanInProgress = false;
+		screenerTrendScanComplete = false;
+		screenerTrendChecked = 0;
+		screenerTrendTotal = 0;
+		updateScreenerTrendProgressText();
+	}
+
+	private void updateScreenerTrendProgressText()
+	{
+		if (!stablePricesOnly)
+		{
+			screenerTrendProgress.setText(" ");
+			return;
+		}
+		if (screenerTrendScanInProgress)
+		{
+			screenerTrendProgress.setText("Checking stability: " + screenerTrendChecked + " / " + screenerTrendTotal);
+			return;
+		}
+		if (screenerTrendScanComplete)
+		{
+			screenerTrendProgress.setText("Stability checked: " + screenerTrendTotal + " items");
+			return;
+		}
+		screenerTrendProgress.setText("Preparing stability scan...");
+	}
+
+	private void updateScreenerPaginationText()
+	{
+		if (screenerPaginationLabel == null || !broaderExpanded)
+		{
+			return;
+		}
+		boolean incomplete = stablePricesOnly && !screenerTrendScanComplete;
+		String count = incomplete ? renderedScreenerTotal + " so far" : Integer.toString(renderedScreenerTotal);
+		screenerPaginationLabel.setText((broaderPage + 1) + "/" + (renderedScreenerMaxPage + 1) + " (" + count + ")");
+		screenerPaginationLabel.revalidate();
+		screenerPaginationLabel.repaint();
 	}
 
 	private Integer parseGpAmount(String text)
@@ -1589,12 +1680,18 @@ public class MerchLensPanel extends PluginPanel
 
 		inner.add(filterCheckbox("Stable prices only", stablePricesOnly, selected -> {
 			stablePricesOnly = selected;
+			resetScreenerTrendProgress();
+			if (!selected && screenerTrendCancelCallback != null)
+			{
+				screenerTrendCancelCallback.run();
+			}
 			resetMarketPages();
 			showRecommendations(lastResponse);
 		}));
 		inner.add(Box.createVerticalStrut(3));
 		inner.add(filterCheckbox("Up to date prices only", upToDatePricesOnly, selected -> {
 			upToDatePricesOnly = selected;
+			resetScreenerTrendProgress();
 			resetMarketPages();
 			showRecommendations(lastResponse);
 		}));
@@ -1622,6 +1719,11 @@ public class MerchLensPanel extends PluginPanel
 
 	private JPanel paginationControls(int total, int maxPage, int pageIndex, Runnable previousAction, Runnable nextAction)
 	{
+		return paginationControls(total, maxPage, pageIndex, false, previousAction, nextAction);
+	}
+
+	private JPanel paginationControls(int total, int maxPage, int pageIndex, boolean incomplete, Runnable previousAction, Runnable nextAction)
+	{
 		JButton previous = new JButton("<");
 		previous.setFont(BODY_FONT);
 		previous.setPreferredSize(new Dimension(36, 24));
@@ -1634,7 +1736,9 @@ public class MerchLensPanel extends PluginPanel
 		next.setEnabled(pageIndex < maxPage);
 		next.addActionListener(event -> nextAction.run());
 
-		JLabel page = new JLabel((pageIndex + 1) + "/" + (maxPage + 1) + " (" + total + ")");
+		String count = incomplete ? total + " so far" : Integer.toString(total);
+		JLabel page = new JLabel((pageIndex + 1) + "/" + (maxPage + 1) + " (" + count + ")");
+		screenerPaginationLabel = page;
 		page.setForeground(Color.LIGHT_GRAY);
 		page.setFont(BODY_FONT);
 		page.setHorizontalAlignment(JLabel.CENTER);
@@ -1697,16 +1801,12 @@ public class MerchLensPanel extends PluginPanel
 		return filtered;
 	}
 
-	private List<RecommendationDto> applyScreenerFilters(List<RecommendationDto> recommendations)
+	private List<RecommendationDto> screenerBaseFilterCandidates(List<RecommendationDto> recommendations)
 	{
 		List<RecommendationDto> filtered = new ArrayList<>();
 		for (RecommendationDto recommendation : recommendations)
 		{
 			if (!passesScreenerBaseFilters(recommendation))
-			{
-				continue;
-			}
-			if (stablePricesOnly && !isStableTrend(recommendation))
 			{
 				continue;
 			}
@@ -1716,7 +1816,7 @@ public class MerchLensPanel extends PluginPanel
 		return filtered;
 	}
 
-	private List<RecommendationDto> screenerTrendWarmupCandidates(List<RecommendationDto> recommendations)
+	private List<RecommendationDto> applyStableScreenerFilter(List<RecommendationDto> recommendations)
 	{
 		if (!stablePricesOnly)
 		{
@@ -1725,17 +1825,12 @@ public class MerchLensPanel extends PluginPanel
 		List<RecommendationDto> filtered = new ArrayList<>();
 		for (RecommendationDto recommendation : recommendations)
 		{
-			if (passesScreenerBaseFilters(recommendation))
+			if (isStableTrend(recommendation))
 			{
 				filtered.add(recommendation);
 			}
 		}
-		filtered.sort(screenerComparator());
-		if (filtered.size() <= SCREENER_TREND_WARMUP_LIMIT)
-		{
-			return filtered;
-		}
-		return new ArrayList<>(filtered.subList(0, SCREENER_TREND_WARMUP_LIMIT));
+		return filtered;
 	}
 
 	private boolean passesScreenerBaseFilters(RecommendationDto recommendation)
@@ -1770,7 +1865,8 @@ public class MerchLensPanel extends PluginPanel
 	private Comparator<RecommendationDto> screenerComparator()
 	{
 		return Comparator
-			.comparingLong(this::limitProfit).reversed()
+			.comparingLong(this::flowProfit).reversed()
+			.thenComparing(Comparator.comparingLong(this::limitProfit).reversed())
 			.thenComparing(Comparator.comparingDouble(RecommendationDto::getRoi).reversed())
 			.thenComparing(Comparator.comparingInt(RecommendationDto::getHourlyVolume).reversed());
 	}
@@ -1835,9 +1931,21 @@ public class MerchLensPanel extends PluginPanel
 				.comparingInt(RecommendationDto::getHourlyVolume).reversed()
 				.thenComparing(Comparator.comparingLong(this::limitProfit).reversed());
 		}
+		if ("Limit P&L".equals(selected))
+		{
+			return Comparator
+				.comparingLong(this::limitProfit).reversed()
+				.thenComparing(Comparator.comparingDouble(RecommendationDto::getRoi).reversed());
+		}
 		return Comparator
-			.comparingLong(this::limitProfit).reversed()
+			.comparingLong(this::flowProfit).reversed()
+			.thenComparing(Comparator.comparingLong(this::limitProfit).reversed())
 			.thenComparing(Comparator.comparingDouble(RecommendationDto::getRoi).reversed());
+	}
+
+	private long flowProfit(RecommendationDto rec)
+	{
+		return rec.getFourHourFlowProfit();
 	}
 
 	private long limitProfit(RecommendationDto rec)
@@ -1970,11 +2078,21 @@ public class MerchLensPanel extends PluginPanel
 		card.add(metricRow("Margin", signedGp(rec.getNetMargin()), rec.getNetMargin() >= 0 ? riskColor("SAFE") : riskColor("ADVANCED")));
 		card.add(metricRow("ROI", String.format("%.2f%%", rec.getRoi() * 100), Color.WHITE));
 		card.add(metricRow(
-			"4h P&L",
-			signedGp(rec.getNetMargin() * rec.getBuyLimit()),
+			"Limit P&L",
+			signedGp(limitProfit(rec)),
 			rec.getNetMargin() >= 0 ? riskColor("SAFE") : riskColor("ADVANCED"),
-			pnlTooltip(rec)
+			limitPnlTooltip(rec)
 		));
+		card.add(metricRow(
+			"Flow P&L",
+			signedGp(flowProfit(rec)),
+			flowProfit(rec) >= 0 ? riskColor("SAFE") : riskColor("ADVANCED"),
+			flowPnlTooltip(rec)
+		));
+		if (rec.isSeverelyFlowLimited())
+		{
+			card.add(liquidityWarning(rec));
+		}
 		card.add(cardSeparator());
 		card.add(metricRow("Buy vol/hr", GP.format(rec.getBuyVolumePerHour()), Color.LIGHT_GRAY));
 		card.add(metricRow("Sell vol/hr", GP.format(rec.getSellVolumePerHour()), Color.LIGHT_GRAY));
@@ -2298,7 +2416,7 @@ public class MerchLensPanel extends PluginPanel
 		return row;
 	}
 
-	private String pnlTooltip(RecommendationDto rec)
+	private String limitPnlTooltip(RecommendationDto rec)
 	{
 		int buyLimit = rec.getBuyLimit();
 		int grossMargin = rec.getSellPrice() - rec.getBuyPrice();
@@ -2313,6 +2431,35 @@ public class MerchLensPanel extends PluginPanel
 			+ "Full 4h limit tax: -" + gp(estimatedTax) + "<br>"
 			+ "Full 4h limit post-tax: " + signedGp(postTaxProfit)
 			+ "</html>";
+	}
+
+	private String flowPnlTooltip(RecommendationDto rec)
+	{
+		int weakerHourlySide = Math.max(0, Math.min(rec.getBuyVolumePerHour(), rec.getSellVolumePerHour()));
+		return "<html>"
+			+ "Weaker-side observed volume: " + GP.format(weakerHourlySide) + " / hr<br>"
+			+ "4h flow quantity: " + GP.format(rec.getFourHourFlowQuantity()) + " / " + GP.format(rec.getBuyLimit()) + " limit<br>"
+			+ "Flow P&L: " + signedGp(rec.getFourHourFlowProfit()) + "<br><br>"
+			+ "Estimated from observed volume. Fills are not guaranteed."
+			+ "</html>";
+	}
+
+	private JPanel liquidityWarning(RecommendationDto rec)
+	{
+		JPanel row = new JPanel();
+		row.setLayout(new BoxLayout(row, BoxLayout.X_AXIS));
+		row.setOpaque(false);
+		row.setBorder(BorderFactory.createEmptyBorder(3, 0, 4, 0));
+		row.setAlignmentX(LEFT_ALIGNMENT);
+		fixedSize(row, TEXT_WIDTH, 25);
+		row.add(statusPill(
+			"Thin volume",
+			riskColor("BALANCED"),
+			"Observed volume supports only " + GP.format(rec.getFourHourFlowQuantity()) + " of "
+				+ GP.format(rec.getBuyLimit()) + " items per 4h limit."
+		));
+		row.add(Box.createHorizontalGlue());
+		return row;
 	}
 
 	private JComponent cardSeparator()

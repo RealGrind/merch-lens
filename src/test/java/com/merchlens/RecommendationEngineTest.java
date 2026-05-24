@@ -86,6 +86,36 @@ public class RecommendationEngineTest
 	}
 
 	@Test
+	public void flowProfitCapsFullLimitProfitAtObservedWeakerSideVolume() throws Exception
+	{
+		RecommendationDto recommendation = engine.screener(
+			Collections.singletonList(item("Arceuus library teleport (tablet)", 3328, 2745, 10_000, 219, 215, 4)),
+			config()
+		).get(0);
+
+		Assert.assertEquals(16, recommendation.getFourHourFlowQuantity());
+		Assert.assertEquals(8_272L, recommendation.getFourHourFlowProfit());
+		Assert.assertTrue(recommendation.isSeverelyFlowLimited());
+		Assert.assertEquals(5_170_000, recommendation.getExpectedProfit());
+	}
+
+	@Test
+	public void screenerRanksObservedFlowAheadOfIlliquidFullLimitProfit() throws Exception
+	{
+		List<RecommendationDto> recommendations = engine.screener(
+			Arrays.asList(
+				item("Thin tablet", 3328, 2745, 10_000, 219, 215, 4),
+				item("Liquid supply", 1300, 1000, 1000, 2000, 1000, 1000)
+			),
+			config()
+		);
+
+		Assert.assertEquals("Liquid supply", recommendations.get(0).getItemName());
+		Assert.assertTrue(recommendations.get(0).getFourHourFlowProfit() > recommendations.get(1).getFourHourFlowProfit());
+		Assert.assertTrue(recommendations.get(1).getExpectedProfit() > recommendations.get(0).getExpectedProfit());
+	}
+
+	@Test
 	public void highVolumeStaplesUsesExpandedResearchCatalog() throws Exception
 	{
 		List<RecommendationDto> recommendations = engine.highVolumeStaples(

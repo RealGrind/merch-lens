@@ -10,11 +10,11 @@ Merch Lens is a beta research tool. Verify trades manually before buying or sell
 
 - Favorites, High Vol, and Screener tabs.
 - Search any OSRS item by name or item ID.
-- Optional in-game item right-click `Merch` lookup that opens the sidebar to that item.
-- Post-tax margin and full 4-hour buy-limit profit estimates.
+- Optional inventory, bank, equipment, and ground-item right-click `Merch` lookup that opens the sidebar to that item.
+- Post-tax margin, full buy-limit profit, and observed-flow profit estimates.
 - Buy volume/hr, sell volume/hr, and buy/sell ratio.
 - Price freshness and 24-hour trend labels.
-- Daily chart popouts from OSRS Wiki 5-minute timeseries data.
+- Daily and weekly price chart popouts from OSRS Wiki timeseries data.
 - Display-only GE offer overlay with minimap-safe compact mode, exact hover details, and local timers.
 - Local-only active offer state and favorites stored in RuneLite profile config.
 

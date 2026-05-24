@@ -37,7 +37,8 @@ class RecommendationEngine
 		}
 
 		recommendations.sort(Comparator
-			.comparingLong((RecommendationDto rec) -> Math.max(0L, (long) rec.getNetMargin() * rec.getBuyLimit())).reversed()
+			.comparingLong((RecommendationDto rec) -> Math.max(0L, rec.getFourHourFlowProfit())).reversed()
+			.thenComparing(Comparator.comparingLong((RecommendationDto rec) -> Math.max(0L, (long) rec.getNetMargin() * rec.getBuyLimit())).reversed())
 			.thenComparing(Comparator.comparingDouble(RecommendationDto::getRoi).reversed())
 			.thenComparing(Comparator.comparingInt(RecommendationDto::getHourlyVolume).reversed()));
 		return recommendations;

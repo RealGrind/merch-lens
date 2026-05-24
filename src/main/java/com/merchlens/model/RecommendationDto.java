@@ -197,6 +197,23 @@ public class RecommendationDto
 		return sellVolumePerHour;
 	}
 
+	public int getFourHourFlowQuantity()
+	{
+		int weakerHourlySide = Math.max(0, Math.min(buyVolumePerHour, sellVolumePerHour));
+		long observedFourHourFlow = (long) weakerHourlySide * 4L;
+		return (int) Math.min(Math.max(0, buyLimit), Math.min(Integer.MAX_VALUE, observedFourHourFlow));
+	}
+
+	public long getFourHourFlowProfit()
+	{
+		return (long) netMargin * getFourHourFlowQuantity();
+	}
+
+	public boolean isSeverelyFlowLimited()
+	{
+		return buyLimit > 0 && (long) getFourHourFlowQuantity() * 4L < buyLimit;
+	}
+
 	public int getLatestAgeMinutes()
 	{
 		return latestAgeMinutes;
