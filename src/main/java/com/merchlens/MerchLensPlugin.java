@@ -77,6 +77,7 @@ public class MerchLensPlugin extends Plugin
 	private TooltipManager tooltipManager;
 
 	private OfferTracker offerTracker;
+	private FlipLogStore flipLogStore;
 	private GeOfferOverlay geOfferOverlay;
 	private FavoriteItemStore favoriteItemStore;
 	private MerchLensPanel panel;
@@ -100,6 +101,8 @@ public class MerchLensPlugin extends Plugin
 	{
 		offerTracker = new OfferTracker(configManager, gson);
 		offerTracker.load();
+		flipLogStore = new FlipLogStore(configManager, gson);
+		flipLogStore.load();
 		geOfferOverlay = new GeOfferOverlay(offerTracker, itemManager, config, client, tooltipManager);
 		overlayManager.add(geOfferOverlay);
 		favoriteItemStore = new FavoriteItemStore(configManager, gson);
@@ -112,8 +115,9 @@ public class MerchLensPlugin extends Plugin
 			this::warmVisibleTrendSignals,
 			this::scanScreenerTrends,
 			this::cancelScreenerTrendScan,
-			this::updateBankSize,
-			config.budget(),
+			this::resetFlipLog,
+			this::updateControlsCollapsed,
+			config.controlsCollapsed(),
 			this::updateScreenerFilters,
 			config.screenerMinPrice(),
 			config.screenerMaxPrice(),
@@ -122,6 +126,7 @@ public class MerchLensPlugin extends Plugin
 			config.screenerBuySellRatio(),
 			itemManager
 		);
+		panel.setFlipLogRecords(flipLogStore.records());
 		BufferedImage icon = createFallbackIcon();
 		navigationButton = NavigationButton.builder()
 			.tooltip("Merch Lens")
@@ -147,6 +152,7 @@ public class MerchLensPlugin extends Plugin
 			clientToolbar.removeNavigation(navigationButton);
 		}
 		favoriteItemStore = null;
+		flipLogStore = null;
 		offerTracker = null;
 		geOfferOverlay = null;
 		panel = null;
@@ -168,7 +174,18 @@ public class MerchLensPlugin extends Plugin
 		{
 			return;
 		}
-		offerTracker.record(event.getSlot(), event.getOffer());
+		OfferFill fill = offerTracker.record(event.getSlot(), event.getOffer());
+		if (fill != null && flipLogStore != null)
+		{
+			ItemComposition item = itemManager.getItemComposition(fill.getItemId());
+			String itemName = item == null ? null : item.getName();
+			flipLogStore.record(fill, itemName);
+			MerchLensPanel currentPanel = panel;
+			if (currentPanel != null)
+			{
+				currentPanel.setFlipLogRecords(flipLogStore.records());
+			}
+		}
 	}
 
 	@Subscribe
@@ -506,10 +523,22 @@ public class MerchLensPlugin extends Plugin
 		}
 	}
 
-	private void updateBankSize(int bankSize)
+	private void updateControlsCollapsed(boolean collapsed)
 	{
-		configManager.setConfiguration("merchlens", "budget", Math.max(1, bankSize));
-		refreshRecommendations();
+		configManager.setConfiguration("merchlens", "controlsCollapsed", collapsed);
+	}
+
+	private void resetFlipLog(long since)
+	{
+		if (flipLogStore == null)
+		{
+			return;
+		}
+		flipLogStore.clearCompletedSince(since);
+		if (panel != null)
+		{
+			panel.setFlipLogRecords(flipLogStore.records());
+		}
 	}
 
 	private void updateScreenerFilters(MerchLensPanel.ScreenerFilters filters)

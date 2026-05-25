@@ -30,7 +30,7 @@ class OfferTracker
 		this.gson = gson;
 	}
 
-	synchronized void record(int slot, GrandExchangeOffer offer)
+	synchronized OfferFill record(int slot, GrandExchangeOffer offer)
 	{
 		if (offer == null || offer.getItemId() <= 0)
 		{
@@ -39,13 +39,14 @@ class OfferTracker
 				activeOffers.remove(slot);
 				save();
 			}
-			return;
+			return null;
 		}
 		long now = Instant.now().getEpochSecond();
 		if (slot >= 0)
 		{
-			recordActiveOffer(slot, offer, now);
+			return recordActiveOffer(slot, offer, now);
 		}
+		return null;
 	}
 
 	synchronized List<TrackedOffer> activeOffers()
@@ -88,17 +89,21 @@ class OfferTracker
 		}
 	}
 
-	private void recordActiveOffer(int slot, GrandExchangeOffer offer, long now)
+	private OfferFill recordActiveOffer(int slot, GrandExchangeOffer offer, long now)
 	{
 		String state = offer.getState() == null ? "EMPTY" : offer.getState().name();
 		if ("EMPTY".equals(state) || offer.getItemId() <= 0 || offer.getTotalQuantity() <= 0)
 		{
 			activeOffers.remove(slot);
 			save();
-			return;
+			return null;
 		}
 
 		TrackedOffer tracked = activeOffers.get(slot);
+		boolean matchingOffer = tracked != null && tracked.matches(offer);
+		int previousQuantity = matchingOffer ? tracked.getFilledQuantity() : 0;
+		int previousSpent = matchingOffer ? tracked.getSpent() : 0;
+		boolean captureExistingProgress = matchingOffer;
 		if (tracked != null && tracked.matches(offer))
 		{
 			tracked.update(offer, now);
@@ -110,6 +115,15 @@ class OfferTracker
 			activeOffers.put(slot, tracked);
 		}
 		save();
+		int filledQuantity = offer.getQuantitySold() - previousQuantity;
+		long filledValue = (long) offer.getSpent() - previousSpent;
+		boolean captureNewOffer = !matchingOffer && tracked.isTrackedStartKnown();
+		if (filledQuantity <= 0 || filledValue < 0 || (!captureExistingProgress && !captureNewOffer))
+		{
+			return null;
+		}
+		OfferFill.Side side = tracked.isBuyOffer() ? OfferFill.Side.BUY : OfferFill.Side.SELL;
+		return new OfferFill(side, offer.getItemId(), filledQuantity, filledValue, now, tracked.offerKey());
 	}
 
 	private void save()

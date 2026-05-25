@@ -145,14 +145,14 @@ public class RecommendationEngineTest
 	}
 
 	@Test
-	public void itemAboveBankSizeIsNotRecommended() throws Exception
+	public void expensiveHighVolumeItemIsNotSilentlyExcludedByCashStack() throws Exception
 	{
 		List<RecommendationDto> recommendations = engine.highVolumeStaples(
 			Collections.singletonList(item("Coal", 75_000_000, 60_000_000, 8, 100_000)),
-			config(50_000_000)
+			config()
 		);
 
-		Assert.assertTrue(recommendations.isEmpty());
+		Assert.assertEquals(1, recommendations.size());
 	}
 
 	@Test
@@ -160,7 +160,7 @@ public class RecommendationEngineTest
 	{
 		RecommendationDto recommendation = engine.highVolumeStaples(
 			Collections.singletonList(item("Coal", 1300, 1000, 100_000, 300_000)),
-			config(50_000_000)
+			config()
 		).get(0);
 
 		Assert.assertEquals(100_000, recommendation.getBuyLimit());
@@ -169,19 +169,8 @@ public class RecommendationEngineTest
 
 	private MerchLensConfig config()
 	{
-		return config(50_000_000);
-	}
-
-	private MerchLensConfig config(int budget)
-	{
 		return new MerchLensConfig()
 		{
-			@Override
-			public int budget()
-			{
-				return budget;
-			}
-
 			@Override
 			public int minimumProfit()
 			{

@@ -166,7 +166,7 @@ class RecommendationEngine
 		String name = item.getMetadata().getName();
 		int buyPrice = item.getLatestPrice().getLow();
 		int sellPrice = item.getLatestPrice().getHigh();
-		if (!isAffordable(buyPrice, config))
+		if (buyPrice <= 0)
 		{
 			return null;
 		}
@@ -232,7 +232,7 @@ class RecommendationEngine
 		String name = item.getMetadata().getName();
 		int buyPrice = item.getLatestPrice().getLow();
 		int sellPrice = item.getLatestPrice().getHigh();
-		if (!isAffordable(buyPrice, config))
+		if (buyPrice <= 0)
 		{
 			return null;
 		}
@@ -312,11 +312,6 @@ class RecommendationEngine
 		result.put("userFit", 1.0);
 		result.put("score", score);
 		return result;
-	}
-
-	private boolean isAffordable(int buyPrice, MerchLensConfig config)
-	{
-		return buyPrice > 0 && buyPrice <= config.budget();
 	}
 
 	private double liquidity(MarketItem item, int quantity)

@@ -454,7 +454,7 @@ public class WikiMarketClient
 			{
 				continue;
 			}
-			if (item.getLatestPrice().getLow() == null || item.getLatestPrice().getLow() > config.budget())
+			if (item.getLatestPrice().getLow() == null)
 			{
 				continue;
 			}

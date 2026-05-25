@@ -28,14 +28,14 @@ public interface MerchLensConfig extends Config
 	}
 
 	@ConfigItem(
-		keyName = "budget",
-		name = "Bank size",
-		description = "Maximum GP price per item to show in recommendations.",
+		keyName = "controlsCollapsed",
+		name = "Controls collapsed",
+		description = "Hidden UI-backed state for the expanded market control panel.",
 		hidden = true
 	)
-	default int budget()
+	default boolean controlsCollapsed()
 	{
-		return 50_000_000;
+		return false;
 	}
 
 	@ConfigItem(

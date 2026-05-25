@@ -1,6 +1,7 @@
 package com.merchlens.ui;
 
 import com.merchlens.model.RecommendationDto;
+import com.merchlens.model.FlipRecord;
 import com.merchlens.GeTax;
 import com.merchlens.HighVolumeItemCatalog;
 import com.merchlens.model.ItemSearchResult;
@@ -12,9 +13,11 @@ import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import java.awt.Insets;
 import java.awt.Rectangle;
@@ -42,13 +45,17 @@ import java.util.Comparator;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.LongConsumer;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.Icon;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
@@ -56,6 +63,7 @@ import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollBar;
@@ -83,36 +91,43 @@ public class MerchLensPanel extends PluginPanel
 	private static final Font STAT_LABEL_FONT = new Font(Font.SANS_SERIF, Font.PLAIN, 11);
 	private static final Font SECTION_FONT = new Font(Font.SANS_SERIF, Font.BOLD, 14);
 	private static final Color TAB_ACCENT = new Color(225, 171, 38);
-	private static final int CONTROL_WIDTH = 176;
-	private static final int LOOKUP_CONTROL_WIDTH = 222;
+	private static final Color PINNED_SURFACE = new Color(34, 34, 34);
+	private static final Color INPUT_SURFACE = new Color(24, 24, 24);
+	private static final Color INPUT_BORDER = new Color(57, 57, 57);
+	private static final int CONTROL_WIDTH = 210;
+	private static final int LOOKUP_CONTROL_WIDTH = 210;
 	private static final int TEXT_WIDTH = 176;
 	private static final int METRIC_ROW_WIDTH = 210;
 	private static final int METRIC_LABEL_WIDTH = 64;
 	private static final int ITEM_ICON_SIZE = 32;
-	private static final int SEARCH_PANEL_HEIGHT = 148;
+	private static final int SEARCH_PANEL_HEIGHT = 100;
 	private static final int CALCULATOR_PANEL_HEIGHT = 206;
 	private static final int CALCULATOR_LABEL_X = 8;
-	private static final int CALCULATOR_FIELD_X = 84;
+	private static final int CALCULATOR_FIELD_X = 76;
 	private static final int CALCULATOR_FIELD_WIDTH = LOOKUP_CONTROL_WIDTH - CALCULATOR_FIELD_X - 12;
 	private static final int CALCULATOR_CLOSE_X = LOOKUP_CONTROL_WIDTH - 22 - 8;
-	private static final int NAV_HEIGHT = 38;
-	private static final int PINNED_HELP_HEIGHT = 30;
+	private static final int NAV_HEIGHT = 40;
+	private static final int PINNED_HELP_HEIGHT = 48;
 	private static final int CONTROL_HEIGHT = 24;
-	private static final int PAGE_ROW_HEIGHT = 30;
+	private static final int PAGE_ROW_HEIGHT = 33;
 	private static final int FILTER_CONTROLS_HEIGHT = 58;
-	private static final int SCREENER_CONTROLS_HEIGHT = 176;
+	private static final int SCREENER_CONTROLS_HEIGHT = 208;
+	private static final int FLIP_LOG_CONTROLS_HEIGHT = 124;
 	private static final int SCREENER_PROGRESS_HEIGHT = 24;
-	private static final int STAPLE_CONTROLS_HEIGHT = 86;
+	private static final int STAPLE_CONTROLS_HEIGHT = 92;
 	private static final int HEART_BUTTON_SIZE = 22;
 	private static final int CLEAR_BUTTON_SIZE = 22;
 	private static final int TITLE_TEXT_WIDTH = TEXT_WIDTH - ITEM_ICON_SIZE - HEART_BUTTON_SIZE - 16;
 	private static final int OUTDATED_PRICE_MINUTES = 10;
 	private static final int RECOMMENDATION_PAGE_SIZE = 5;
+	private static final int FLIP_LOG_PAGE_SIZE = 5;
 	private static final int SEARCH_MIN_QUERY_LENGTH = 1;
 	private static final int SEARCH_SUGGESTION_LIMIT = 80;
 	private static final int SEARCH_SUGGESTION_HEIGHT = 220;
 	private static final String[] STAPLE_TYPES = HighVolumeItemCatalog.categories();
-	private static final String[] STAPLE_SORTS = {"Flow P&L", "Limit P&L", "ROI", "Buy price", "Margin each", "Vol/hr"};
+	private static final String[] MARKET_SORTS = {"Flow P&L", "Limit P&L", "ROI", "Buy price", "Net margin", "Vol/hr"};
+	private static final String[] FLIP_LOG_TIMEFRAMES = {"This session", "Past 1 hr", "Past 4 hr", "Past 12 hr", "Past day", "Past week", "Past month", "All time"};
+	private static final String[] FLIP_LOG_SORTS = {"Most recent", "Most profitable"};
 	private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("h:mm a", Locale.US)
 		.withZone(ZoneId.systemDefault());
 
@@ -123,7 +138,8 @@ public class MerchLensPanel extends PluginPanel
 	private final Consumer<List<RecommendationDto>> visibleTrendCallback;
 	private final Consumer<List<RecommendationDto>> screenerTrendScanCallback;
 	private final Runnable screenerTrendCancelCallback;
-	private final Consumer<Integer> bankSizeCallback;
+	private final LongConsumer flipLogResetCallback;
+	private final Consumer<Boolean> controlsCollapsedCallback;
 	private final Consumer<ScreenerFilters> screenerFiltersCallback;
 	private final ItemManager itemManager;
 	private final JPanel pinnedContent = new JPanel();
@@ -131,10 +147,10 @@ public class MerchLensPanel extends PluginPanel
 	private final JLabel status = new JLabel("Refresh to load OSRS Wiki market recommendations.");
 	private final JLabel credit = new JLabel("Plugin Created by Real Grind");
 	private final JTextField searchField = new JTextField();
-	private final JTextField bankSizeField = new JTextField();
 	private final JTextField calculatorBuyPriceField = new JTextField();
 	private final JTextField calculatorSellPriceField = new JTextField();
 	private final JTextField calculatorQuantityField = new JTextField();
+	private final JTextField flipLogSearchField = new JTextField();
 	private final JLabel calculatorTaxEachValue = new JLabel("-");
 	private final JLabel calculatorTaxValue = new JLabel("-");
 	private final JLabel calculatorProfitValue = new JLabel("-");
@@ -154,25 +170,32 @@ public class MerchLensPanel extends PluginPanel
 	private int staplesPage;
 	private int favoritesPage;
 	private int broaderPage;
+	private int flipLogPage;
 	private int stapleTypeIndex;
 	private int stapleSortIndex;
+	private int screenerSortIndex;
+	private int flipLogTimeframeIndex;
+	private int flipLogSortIndex;
 	private boolean stablePricesOnly;
 	private boolean upToDatePricesOnly;
 	private boolean calculatorExpanded;
+	private boolean controlsCollapsed;
+	private boolean pinnedAreaMinimized;
 	private boolean favoritesExpanded;
 	private boolean highVolumeExpanded = true;
 	private boolean broaderExpanded;
+	private boolean flipLogExpanded;
 	private SignalResponse lastResponse;
 	private RecommendationDto searchResult;
 	private String searchMessage;
 	private Color searchMessageColor = Color.LIGHT_GRAY;
 	private List<ItemSearchResult> searchItems = Collections.emptyList();
 	private Set<Integer> favoriteItemIds = new HashSet<>();
+	private List<FlipRecord> flipLogRecords = Collections.emptyList();
 	private boolean selectingSearchSuggestion;
 	private boolean comboPopupOpen;
 	private SignalResponse deferredRecommendationResponse;
 	private int deferredScrollValue;
-	private int bankSize;
 	private int screenerMinPrice;
 	private int screenerMaxPrice;
 	private int screenerMinBuyVolume;
@@ -184,6 +207,7 @@ public class MerchLensPanel extends PluginPanel
 	private int screenerTrendTotal;
 	private int renderedScreenerTotal;
 	private int renderedScreenerMaxPage;
+	private final long panelStartedAt = Instant.now().getEpochSecond();
 
 	public enum ChartPeriod
 	{
@@ -260,8 +284,9 @@ public class MerchLensPanel extends PluginPanel
 		Consumer<List<RecommendationDto>> visibleTrendCallback,
 		Consumer<List<RecommendationDto>> screenerTrendScanCallback,
 		Runnable screenerTrendCancelCallback,
-		Consumer<Integer> bankSizeCallback,
-		int bankSize,
+		LongConsumer flipLogResetCallback,
+		Consumer<Boolean> controlsCollapsedCallback,
+		boolean controlsCollapsed,
 		Consumer<ScreenerFilters> screenerFiltersCallback,
 		int screenerMinPrice,
 		int screenerMaxPrice,
@@ -278,8 +303,9 @@ public class MerchLensPanel extends PluginPanel
 		this.visibleTrendCallback = visibleTrendCallback;
 		this.screenerTrendScanCallback = screenerTrendScanCallback;
 		this.screenerTrendCancelCallback = screenerTrendCancelCallback;
-		this.bankSizeCallback = bankSizeCallback;
-		this.bankSize = Math.max(1, bankSize);
+		this.flipLogResetCallback = flipLogResetCallback;
+		this.controlsCollapsedCallback = controlsCollapsedCallback;
+		this.controlsCollapsed = controlsCollapsed;
 		this.screenerFiltersCallback = screenerFiltersCallback;
 		this.screenerMinPrice = Math.max(0, screenerMinPrice);
 		this.screenerMaxPrice = Math.max(0, screenerMaxPrice);
@@ -320,11 +346,14 @@ public class MerchLensPanel extends PluginPanel
 		brand.add(badge, BorderLayout.WEST);
 		brand.add(titleStack, BorderLayout.CENTER);
 
-		JButton refresh = new JButton("Refresh");
-		refresh.setFont(BODY_FONT);
+		JButton refresh = new RefreshButton();
+		refresh.setToolTipText("Refresh market data.");
 		refresh.addActionListener(event -> refreshCallback.run());
+		JPanel refreshSlot = new JPanel(new GridBagLayout());
+		refreshSlot.setOpaque(false);
+		refreshSlot.add(refresh);
 		header.add(brand, BorderLayout.WEST);
-		header.add(refresh, BorderLayout.EAST);
+		header.add(refreshSlot, BorderLayout.EAST);
 
 		status.setForeground(Color.LIGHT_GRAY);
 		status.setFont(BODY_FONT);
@@ -354,6 +383,7 @@ public class MerchLensPanel extends PluginPanel
 			}
 		});
 		searchField.setFont(BODY_FONT);
+		stylePinnedField(searchField);
 		searchField.addActionListener(event -> submitSearch());
 		searchField.addFocusListener(new FocusAdapter()
 		{
@@ -389,22 +419,10 @@ public class MerchLensPanel extends PluginPanel
 		screenerTrendProgress.setFont(STAT_LABEL_FONT);
 		screenerTrendProgress.setForeground(Color.LIGHT_GRAY);
 		screenerTrendProgress.setAlignmentX(Component.CENTER_ALIGNMENT);
-		bankSizeField.setFont(BODY_FONT);
-		bankSizeField.setHorizontalAlignment(JTextField.RIGHT);
-		bankSizeField.setText(GP.format(this.bankSize));
-		bankSizeField.addActionListener(event -> commitBankSize());
-		bankSizeField.addFocusListener(new FocusAdapter()
-		{
-			@Override
-			public void focusLost(FocusEvent event)
-			{
-				commitBankSize();
-				flushDeferredRecommendationRender();
-			}
-		});
 		configureCalculatorField(calculatorBuyPriceField, "Buy price per item.");
 		configureCalculatorField(calculatorSellPriceField, "Sell price per item.");
 		configureCalculatorField(calculatorQuantityField, "Item quantity.");
+		configureFlipLogSearchField();
 		configureScreenerField(screenerMinPriceField, "Minimum Buy at price. Blank means no minimum.");
 		configureScreenerField(screenerMaxPriceField, "Maximum Buy at price. Blank means no maximum.");
 		configureScreenerField(screenerMinBuyVolumeField, "Buy volume per hour. Leave blank for no filter.");
@@ -427,7 +445,7 @@ public class MerchLensPanel extends PluginPanel
 		body.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		body.add(pinnedContent, BorderLayout.NORTH);
 		body.add(scrollPane, BorderLayout.CENTER);
-		renderPinnedControls(null, 0, 0, 0, 0, 0, 0);
+		renderPinnedControls(null, 0, 0, 0, 0, 0, 0, 0, 0);
 		bindWheelScrolling(this);
 		bindWheelScrolling(body);
 		bindWheelScrolling(pinnedContent);
@@ -458,7 +476,7 @@ public class MerchLensPanel extends PluginPanel
 	{
 		SwingUtilities.invokeLater(() -> {
 			status.setText(message);
-			renderPinnedControls(lastResponse, 0, 0, 0, 0, 0, 0);
+			renderPinnedControls(lastResponse, 0, 0, 0, 0, 0, 0, 0, 0);
 			content.removeAll();
 			content.add(emptyState("Market data unavailable", "Check your connection and refresh OSRS Wiki recommendations."));
 			content.revalidate();
@@ -566,6 +584,17 @@ public class MerchLensPanel extends PluginPanel
 		});
 	}
 
+	public void setFlipLogRecords(List<FlipRecord> records)
+	{
+		SwingUtilities.invokeLater(() -> {
+			flipLogRecords = records == null ? Collections.emptyList() : new ArrayList<>(records);
+			if (flipLogExpanded)
+			{
+				renderCurrent();
+			}
+		});
+	}
+
 	public void lookupItem(int itemId, String itemName)
 	{
 		SwingUtilities.invokeLater(() -> {
@@ -588,8 +617,21 @@ public class MerchLensPanel extends PluginPanel
 			return;
 		}
 		content.removeAll();
-		renderPinnedControls(null, 0, 0, 0, 0, 0, 0);
-		addSearchResult();
+		if (flipLogExpanded)
+		{
+			List<FlipRecord> filteredRecords = filteredFlipLogRecords();
+			List<FlipItemTotal> flipItems = summarizedFlipItems(filteredRecords);
+			int maxPage = Math.max(0, (flipItems.size() - 1) / FLIP_LOG_PAGE_SIZE);
+			flipLogPage = Math.min(flipLogPage, maxPage);
+			renderPinnedControls(null, 0, 0, 0, 0, 0, 0, flipItems.size(), maxPage);
+			addSearchResult();
+			addFlipLogContent(filteredRecords, flipItems);
+		}
+		else
+		{
+			renderPinnedControls(null, 0, 0, 0, 0, 0, 0, 0, 0);
+			addSearchResult();
+		}
 		content.revalidate();
 		content.repaint();
 		restoreScrollPosition(scrollValue);
@@ -631,8 +673,12 @@ public class MerchLensPanel extends PluginPanel
 			boolean broaderCheckingTrends = stablePricesOnly && (screenerTrendScanInProgress || hasMissingTrend(broaderBaseCandidates));
 			int broaderMaxPage = Math.max(0, (broader.size() - 1) / RECOMMENDATION_PAGE_SIZE);
 			broaderPage = Math.min(broaderPage, broaderMaxPage);
+			List<FlipRecord> filteredFlipRecords = filteredFlipLogRecords();
+			List<FlipItemTotal> flipItems = summarizedFlipItems(filteredFlipRecords);
+			int flipLogMaxPage = Math.max(0, (flipItems.size() - 1) / FLIP_LOG_PAGE_SIZE);
+			flipLogPage = Math.min(flipLogPage, flipLogMaxPage);
 
-			renderPinnedControls(response, favorites.size(), favoriteMaxPage, staples.size(), maxPage, broader.size(), broaderMaxPage);
+			renderPinnedControls(response, favorites.size(), favoriteMaxPage, staples.size(), maxPage, broader.size(), broaderMaxPage, flipItems.size(), flipLogMaxPage);
 			addSearchResult();
 
 			if (favoritesExpanded)
@@ -685,9 +731,14 @@ public class MerchLensPanel extends PluginPanel
 				}
 			}
 
-			if (recommendations.isEmpty())
+			if (flipLogExpanded)
 			{
-			content.add(emptyState("No market items", "Refresh market data or adjust your cash stack."));
+				addFlipLogContent(filteredFlipRecords, flipItems);
+			}
+
+			if (recommendations.isEmpty() && !flipLogExpanded)
+			{
+			content.add(emptyState("No market items", "Refresh market data or adjust the current filters."));
 			}
 
 			content.revalidate();
@@ -696,6 +747,20 @@ public class MerchLensPanel extends PluginPanel
 		requestScreenerTrendScan(broaderBaseCandidates);
 		bindWheelScrolling(pinnedContent);
 		bindWheelScrolling(content);
+	}
+
+	private void addFlipLogContent(List<FlipRecord> filteredRecords, List<FlipItemTotal> flipItems)
+	{
+		content.add(flipLogSummaryCard(filteredRecords));
+		if (flipItems.isEmpty())
+		{
+			content.add(emptyState("No completed flips shown", "Completed buy/sell matches recorded locally will appear here."));
+			return;
+		}
+		flipItems.stream()
+			.skip((long) flipLogPage * FLIP_LOG_PAGE_SIZE)
+			.limit(FLIP_LOG_PAGE_SIZE)
+			.forEach(item -> content.add(flipItemCard(item)));
 	}
 
 	private List<RecommendationDto> trendWarmupCandidates(
@@ -785,16 +850,56 @@ public class MerchLensPanel extends PluginPanel
 		int stapleTotal,
 		int stapleMaxPage,
 		int broaderTotal,
-		int broaderMaxPage)
+		int broaderMaxPage,
+		int flipLogTotal,
+		int flipLogMaxPage)
 	{
 		pinnedContent.removeAll();
-		pinnedContent.add(searchPanel());
-		if (response != null)
+		if (pinnedAreaMinimized)
 		{
-			pinnedContent.add(marketNav());
-			if (favoritesExpanded)
+			pinnedContent.add(minimizedPinnedControls());
+			pinnedContent.revalidate();
+			pinnedContent.repaint();
+			return;
+		}
+		pinnedContent.add(searchPanel());
+		pinnedContent.add(utilityNav());
+		if (calculatorExpanded)
+		{
+			pinnedContent.add(calculatorSection());
+		}
+		pinnedContent.add(marketNav());
+		if (!controlsCollapsed && flipLogExpanded)
+		{
+			pinnedContent.add(pinnedHeading("Flip Log", "Locally recorded completed flips."));
+			pinnedContent.add(flipLogControls());
+			pinnedContent.add(paginationControls(
+				flipLogTotal,
+				flipLogMaxPage,
+				flipLogPage,
+				() -> {
+					int updatedPage = Math.max(0, flipLogPage - 1);
+					if (updatedPage != flipLogPage)
+					{
+						flipLogPage = updatedPage;
+						renderCurrentAtTop();
+					}
+				},
+				() -> {
+					int updatedPage = Math.min(flipLogMaxPage, flipLogPage + 1);
+					if (updatedPage != flipLogPage)
+					{
+						flipLogPage = updatedPage;
+						renderCurrentAtTop();
+					}
+				}
+			));
+		}
+		else if (response != null)
+		{
+			if (!controlsCollapsed && favoritesExpanded)
 			{
-				pinnedContent.add(pinnedHelp("Saved items."));
+				pinnedContent.add(pinnedHeading("Favorites", "Saved items."));
 				pinnedContent.add(filterControls());
 				if (favoriteTotal > 0)
 				{
@@ -821,17 +926,17 @@ public class MerchLensPanel extends PluginPanel
 					));
 				}
 			}
-			else if (highVolumeExpanded)
+			else if (!controlsCollapsed && highVolumeExpanded)
 			{
-				pinnedContent.add(pinnedHelp("Curated high-volume watchlist."));
+				pinnedContent.add(pinnedHeading("High Volume", "Curated high-volume watchlist."));
 				pinnedContent.add(filterControls());
 				pinnedContent.add(stapleControls(stapleTotal, stapleMaxPage));
 			}
-			else if (broaderExpanded)
+			else if (!controlsCollapsed && broaderExpanded)
 			{
 				renderedScreenerTotal = broaderTotal;
 				renderedScreenerMaxPage = broaderMaxPage;
-				pinnedContent.add(pinnedHelp("Profitable items matching filters."));
+				pinnedContent.add(pinnedHeading("Market Screener", "Profitable items matching your filters."));
 				pinnedContent.add(filterControls());
 				pinnedContent.add(screenerControls());
 				pinnedContent.add(paginationControls(
@@ -866,87 +971,135 @@ public class MerchLensPanel extends PluginPanel
 	{
 		JPanel panel = new JPanel();
 		panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-		panel.setOpaque(false);
-		panel.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+		panel.setOpaque(true);
+		panel.setBackground(PINNED_SURFACE);
+		panel.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(47, 47, 47)),
+			BorderFactory.createEmptyBorder(9, 10, 9, 10)
+		));
 		panel.setAlignmentX(LEFT_ALIGNMENT);
 		boolean showSearchMessage = hasSearchInlineMessage();
-		fixedHeight(panel, SEARCH_PANEL_HEIGHT - (showSearchMessage ? 0 : 20) + (calculatorExpanded ? CALCULATOR_PANEL_HEIGHT : 0));
+		fixedHeight(panel, SEARCH_PANEL_HEIGHT - (showSearchMessage ? 0 : 20));
 
-		JLabel label = new JLabel("Item Lookup");
-		label.setForeground(Color.WHITE);
-		label.setFont(SECTION_FONT);
-		label.setAlignmentX(LEFT_ALIGNMENT);
-
-		JButton search = new JButton("Search");
-		search.setFont(BODY_FONT);
-		search.addActionListener(event -> submitSearch());
-		JButton calculator = new CalculatorButton();
-		calculator.setToolTipText("Open profit calculator.");
-		calculator.addActionListener(event -> toggleCalculator());
-		JPanel buttonRow = new JPanel(new BorderLayout());
-		buttonRow.setOpaque(false);
-		fixedSize(buttonRow, LOOKUP_CONTROL_WIDTH, 26);
-		buttonRow.setAlignmentX(LEFT_ALIGNMENT);
-		buttonRow.add(search, BorderLayout.WEST);
-		buttonRow.add(calculator, BorderLayout.EAST);
-
-		panel.add(label);
-		panel.add(Box.createVerticalStrut(5));
-		panel.add(searchInputControl());
-		panel.add(Box.createVerticalStrut(5));
-		panel.add(buttonRow);
+		panel.add(searchHeading());
+		panel.add(Box.createVerticalStrut(8));
+		panel.add(searchQueryRow());
 		if (showSearchMessage)
 		{
 			panel.add(Box.createVerticalStrut(4));
 			fixedSize(searchInlineMessage, LOOKUP_CONTROL_WIDTH, 16);
 			panel.add(searchInlineMessage);
 		}
-		if (calculatorExpanded)
-		{
-			panel.add(Box.createVerticalStrut(4));
-			panel.add(calculatorPanel());
-		}
-		panel.add(Box.createVerticalStrut(calculatorExpanded ? 8 : 5));
-		panel.add(bankSizeControl());
 		return panel;
 	}
 
-	private JComponent searchInputControl()
+	private JComponent searchHeading()
+	{
+		JPanel row = new JPanel(new BorderLayout());
+		row.setOpaque(false);
+		row.setAlignmentX(LEFT_ALIGNMENT);
+		flexibleRow(row, LOOKUP_CONTROL_WIDTH, CONTROL_HEIGHT);
+
+		JLabel label = new JLabel("Item Lookup");
+		label.setForeground(Color.WHITE);
+		label.setFont(SECTION_FONT);
+		row.add(label, BorderLayout.WEST);
+		JButton minimize = new PinnedAreaButton(false);
+		minimize.setToolTipText("Hide controls.");
+		minimize.addActionListener(event -> togglePinnedArea());
+		row.add(minimize, BorderLayout.EAST);
+		return row;
+	}
+
+	private JPanel minimizedPinnedControls()
+	{
+		JPanel panel = new JPanel(new BorderLayout());
+		panel.setOpaque(true);
+		panel.setBackground(PINNED_SURFACE);
+		panel.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(47, 47, 47)),
+			BorderFactory.createEmptyBorder(9, 10, 9, 10)
+		));
+		panel.setAlignmentX(LEFT_ALIGNMENT);
+		fixedHeight(panel, CONTROL_HEIGHT + 19);
+		JButton restore = new PinnedAreaButton(true);
+		restore.setToolTipText("Show controls.");
+		restore.addActionListener(event -> togglePinnedArea());
+		panel.add(restore, BorderLayout.EAST);
+		return panel;
+	}
+
+	private void togglePinnedArea()
+	{
+		pinnedAreaMinimized = !pinnedAreaMinimized;
+		if (pinnedAreaMinimized)
+		{
+			searchPopup.setVisible(false);
+		}
+		renderCurrent();
+	}
+
+	private JPanel searchQueryRow()
+	{
+		JPanel row = new JPanel(new BorderLayout(6, 0));
+		row.setOpaque(false);
+		row.setAlignmentX(LEFT_ALIGNMENT);
+		flexibleRow(row, LOOKUP_CONTROL_WIDTH, CONTROL_HEIGHT);
+
+		JButton search = new SearchButton();
+		search.setToolTipText("Search item.");
+		search.addActionListener(event -> submitSearch());
+		row.add(searchInputControl(LOOKUP_CONTROL_WIDTH - 34), BorderLayout.CENTER);
+		row.add(search, BorderLayout.EAST);
+		return row;
+	}
+
+	private JPanel calculatorSection()
+	{
+		JPanel panel = new JPanel(new BorderLayout());
+		panel.setOpaque(true);
+		panel.setBackground(PINNED_SURFACE);
+		panel.setBorder(BorderFactory.createEmptyBorder(5, 10, 8, 10));
+		panel.setAlignmentX(LEFT_ALIGNMENT);
+		fixedHeight(panel, CALCULATOR_PANEL_HEIGHT + 5);
+		panel.add(calculatorPanel(), BorderLayout.CENTER);
+		return panel;
+	}
+
+	private void setControlsCollapsed(boolean collapsed)
+	{
+		if (controlsCollapsed == collapsed)
+		{
+			return;
+		}
+		controlsCollapsed = collapsed;
+		if (collapsed)
+		{
+			searchPopup.setVisible(false);
+		}
+		if (controlsCollapsedCallback != null)
+		{
+			controlsCollapsedCallback.accept(collapsed);
+		}
+		renderCurrent();
+	}
+
+	private JComponent searchInputControl(int width)
 	{
 		searchField.setAlignmentX(LEFT_ALIGNMENT);
 		if (!hasActiveSearch())
 		{
-			fixedSize(searchField, LOOKUP_CONTROL_WIDTH, CONTROL_HEIGHT);
+			fixedSize(searchField, width, CONTROL_HEIGHT);
 			return searchField;
 		}
 
 		JPanel row = new JPanel(new BorderLayout(4, 0));
 		row.setOpaque(false);
 		row.setAlignmentX(LEFT_ALIGNMENT);
-		fixedSize(row, LOOKUP_CONTROL_WIDTH, CONTROL_HEIGHT);
-		fixedSize(searchField, LOOKUP_CONTROL_WIDTH - CLEAR_BUTTON_SIZE - 4, CONTROL_HEIGHT);
+		fixedSize(row, width, CONTROL_HEIGHT);
+		fixedSize(searchField, width - CLEAR_BUTTON_SIZE - 4, CONTROL_HEIGHT);
 		row.add(searchField, BorderLayout.CENTER);
 		row.add(clearSearchButton("Clear item lookup"), BorderLayout.EAST);
-		return row;
-	}
-
-	private JPanel bankSizeControl()
-	{
-		JPanel row = new JPanel(new BorderLayout(6, 0));
-		row.setOpaque(false);
-		row.setAlignmentX(LEFT_ALIGNMENT);
-		fixedSize(row, LOOKUP_CONTROL_WIDTH, CONTROL_HEIGHT);
-
-		JLabel label = new JLabel("Cash stack");
-		label.setForeground(Color.LIGHT_GRAY);
-		label.setFont(BODY_FONT);
-		label.setToolTipText("Max item price shown in recommendations.");
-		fixedSize(label, 74, CONTROL_HEIGHT);
-
-		fixedSize(bankSizeField, LOOKUP_CONTROL_WIDTH - 80, CONTROL_HEIGHT);
-		bankSizeField.setToolTipText("Max item price shown in recommendations.");
-		row.add(label, BorderLayout.WEST);
-		row.add(bankSizeField, BorderLayout.CENTER);
 		return row;
 	}
 
@@ -1014,8 +1167,9 @@ public class MerchLensPanel extends PluginPanel
 	{
 		JPanel panel = new JPanel();
 		panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-		panel.setOpaque(false);
-		panel.setBorder(BorderFactory.createEmptyBorder(0, 0, 6, 0));
+		panel.setOpaque(true);
+		panel.setBackground(PINNED_SURFACE);
+		panel.setBorder(BorderFactory.createEmptyBorder(2, 10, 8, 10));
 		panel.setAlignmentX(LEFT_ALIGNMENT);
 		fixedHeight(panel, SCREENER_CONTROLS_HEIGHT + (stablePricesOnly ? SCREENER_PROGRESS_HEIGHT : 0));
 		panel.add(screenerFilterRow("Min price", screenerMinPriceField));
@@ -1029,6 +1183,8 @@ public class MerchLensPanel extends PluginPanel
 		panel.add(screenerFilterRow("B/S ratio", screenerBuySellRatioField));
 		panel.add(Box.createVerticalStrut(6));
 		panel.add(screenerButtonRow());
+		panel.add(Box.createVerticalStrut(4));
+		panel.add(screenerSortControl());
 		if (stablePricesOnly)
 		{
 			panel.add(Box.createVerticalStrut(5));
@@ -1037,6 +1193,106 @@ public class MerchLensPanel extends PluginPanel
 			panel.add(screenerTrendProgress);
 		}
 		return panel;
+	}
+
+	private JComboBox<String> screenerSortControl()
+	{
+		JComboBox<String> sort = new JComboBox<>(MARKET_SORTS);
+		sort.setSelectedIndex(screenerSortIndex);
+		stylePinnedCombo(sort, "Sort items by");
+		fixedSize(sort, CONTROL_WIDTH, CONTROL_HEIGHT);
+		sort.setAlignmentX(Component.CENTER_ALIGNMENT);
+		deferRendersWhileOpen(sort);
+		sort.addActionListener(event -> {
+			screenerSortIndex = sort.getSelectedIndex();
+			broaderPage = 0;
+			renderCurrentAtTop();
+		});
+		return sort;
+	}
+
+	private JPanel flipLogControls()
+	{
+		JPanel panel = new JPanel();
+		panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+		panel.setOpaque(true);
+		panel.setBackground(PINNED_SURFACE);
+		panel.setBorder(BorderFactory.createEmptyBorder(2, 10, 8, 10));
+		panel.setAlignmentX(LEFT_ALIGNMENT);
+		fixedHeight(panel, FLIP_LOG_CONTROLS_HEIGHT);
+
+		JComboBox<String> timeframe = new JComboBox<>(FLIP_LOG_TIMEFRAMES);
+		timeframe.setSelectedIndex(flipLogTimeframeIndex);
+		stylePinnedCombo(timeframe, "Timeframe for completed flips.");
+		fixedSize(timeframe, CONTROL_WIDTH, CONTROL_HEIGHT);
+		timeframe.setAlignmentX(Component.CENTER_ALIGNMENT);
+		timeframe.addActionListener(event -> {
+			flipLogTimeframeIndex = timeframe.getSelectedIndex();
+			flipLogPage = 0;
+			renderCurrentAtTop();
+		});
+		panel.add(timeframe);
+		panel.add(Box.createVerticalStrut(4));
+		panel.add(flipLogSearchRow());
+		panel.add(Box.createVerticalStrut(4));
+
+		JComboBox<String> sort = new JComboBox<>(FLIP_LOG_SORTS);
+		sort.setSelectedIndex(flipLogSortIndex);
+		stylePinnedCombo(sort, "Sort logged item totals.");
+		fixedSize(sort, CONTROL_WIDTH, CONTROL_HEIGHT);
+		sort.setAlignmentX(Component.CENTER_ALIGNMENT);
+		sort.addActionListener(event -> {
+			flipLogSortIndex = sort.getSelectedIndex();
+			flipLogPage = 0;
+			renderCurrentAtTop();
+		});
+		panel.add(sort);
+		panel.add(Box.createVerticalStrut(6));
+
+		JButton reset = new JButton("Reset log");
+		reset.setFont(BODY_FONT);
+		reset.setToolTipText("Clear logged completed flips in the selected timeframe.");
+		fixedSize(reset, CONTROL_WIDTH, CONTROL_HEIGHT);
+		reset.setAlignmentX(Component.CENTER_ALIGNMENT);
+		reset.addActionListener(event -> confirmFlipLogReset());
+		panel.add(reset);
+		return panel;
+	}
+
+	private JPanel flipLogSearchRow()
+	{
+		JPanel row = new JPanel(new BorderLayout(6, 0));
+		row.setOpaque(false);
+		row.setAlignmentX(Component.CENTER_ALIGNMENT);
+		fixedSize(row, CONTROL_WIDTH, CONTROL_HEIGHT);
+		fixedSize(flipLogSearchField, CONTROL_WIDTH - 34, CONTROL_HEIGHT);
+		JButton search = new SearchButton();
+		search.setToolTipText("Filter flip log.");
+		search.addActionListener(event -> {
+			flipLogPage = 0;
+			renderCurrentAtTop();
+		});
+		row.add(flipLogSearchField, BorderLayout.CENTER);
+		row.add(search, BorderLayout.EAST);
+		return row;
+	}
+
+	private void confirmFlipLogReset()
+	{
+		String timeframe = FLIP_LOG_TIMEFRAMES[flipLogTimeframeIndex];
+		int result = JOptionPane.showConfirmDialog(
+			this,
+			"Delete completed flip results from " + timeframe.toLowerCase(Locale.US) + "?\n"
+				+ "Open buy cost basis is retained for later sales.",
+			"Reset Flip Log",
+			JOptionPane.YES_NO_OPTION,
+			JOptionPane.WARNING_MESSAGE
+		);
+		if (result == JOptionPane.YES_OPTION && flipLogResetCallback != null)
+		{
+			flipLogResetCallback.accept(selectedFlipLogCutoff());
+			flipLogPage = 0;
+		}
 	}
 
 	private JPanel screenerButtonRow()
@@ -1084,6 +1340,7 @@ public class MerchLensPanel extends PluginPanel
 	{
 		field.setFont(BODY_FONT);
 		field.setHorizontalAlignment(JTextField.RIGHT);
+		stylePinnedField(field);
 		field.setToolTipText(tooltip);
 		field.addActionListener(event -> commitScreenerFilters());
 		field.addFocusListener(new FocusAdapter()
@@ -1095,6 +1352,17 @@ public class MerchLensPanel extends PluginPanel
 				flushDeferredRecommendationRender();
 			}
 		});
+	}
+
+	private void stylePinnedField(JTextField field)
+	{
+		field.setForeground(Color.WHITE);
+		field.setCaretColor(Color.WHITE);
+		field.setBackground(INPUT_SURFACE);
+		field.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createLineBorder(INPUT_BORDER),
+			BorderFactory.createEmptyBorder(1, 6, 1, 6)
+		));
 	}
 
 	private void configureCalculatorField(JTextField field, String tooltip)
@@ -1139,6 +1407,17 @@ public class MerchLensPanel extends PluginPanel
 		});
 	}
 
+	private void configureFlipLogSearchField()
+	{
+		flipLogSearchField.setFont(BODY_FONT);
+		stylePinnedField(flipLogSearchField);
+		flipLogSearchField.setToolTipText("Filter logged flips by item name.");
+		flipLogSearchField.addActionListener(event -> {
+			flipLogPage = 0;
+			renderCurrentAtTop();
+		});
+	}
+
 	private void toggleCalculator()
 	{
 		calculatorExpanded = !calculatorExpanded;
@@ -1176,26 +1455,6 @@ public class MerchLensPanel extends PluginPanel
 		calculatorTaxValue.setForeground(Color.LIGHT_GRAY);
 		calculatorProfitValue.setText(signedGp(totalProfit));
 		calculatorProfitValue.setForeground(totalProfit >= 0 ? riskColor("SAFE") : riskColor("ADVANCED"));
-	}
-
-	private void commitBankSize()
-	{
-		Integer parsed = parseGpAmount(bankSizeField.getText());
-		if (parsed == null)
-		{
-			bankSizeField.setText(GP.format(bankSize));
-			setSearchInlineMessage("Enter a valid cash stack.", riskColor("BALANCED"));
-			return;
-		}
-		int updated = Math.max(1, parsed);
-		bankSizeField.setText(GP.format(updated));
-		if (updated == bankSize)
-		{
-			return;
-		}
-		bankSize = updated;
-		setSearchInlineMessage(null, Color.LIGHT_GRAY);
-		bankSizeCallback.accept(updated);
 	}
 
 	private void commitScreenerFilters()
@@ -1594,14 +1853,15 @@ public class MerchLensPanel extends PluginPanel
 	{
 		JPanel panel = new JPanel();
 		panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-		panel.setOpaque(false);
-		panel.setBorder(BorderFactory.createEmptyBorder(0, 0, 6, 0));
+		panel.setOpaque(true);
+		panel.setBackground(PINNED_SURFACE);
+		panel.setBorder(BorderFactory.createEmptyBorder(3, 10, 7, 10));
 		panel.setAlignmentX(LEFT_ALIGNMENT);
 		fixedHeight(panel, STAPLE_CONTROLS_HEIGHT);
 
 		JComboBox<String> type = new JComboBox<>(STAPLE_TYPES);
 		type.setSelectedIndex(stapleTypeIndex);
-		type.setFont(BODY_FONT);
+		stylePinnedCombo(type, "Item category");
 		fixedSize(type, CONTROL_WIDTH, CONTROL_HEIGHT);
 		type.setAlignmentX(Component.CENTER_ALIGNMENT);
 		deferRendersWhileOpen(type);
@@ -1611,9 +1871,9 @@ public class MerchLensPanel extends PluginPanel
 			showRecommendations(lastResponse);
 		});
 
-		JComboBox<String> sort = new JComboBox<>(STAPLE_SORTS);
+		JComboBox<String> sort = new JComboBox<>(MARKET_SORTS);
 		sort.setSelectedIndex(stapleSortIndex);
-		sort.setFont(BODY_FONT);
+		stylePinnedCombo(sort, "Sort items by");
 		fixedSize(sort, CONTROL_WIDTH, CONTROL_HEIGHT);
 		sort.setAlignmentX(Component.CENTER_ALIGNMENT);
 		deferRendersWhileOpen(sort);
@@ -1623,9 +1883,7 @@ public class MerchLensPanel extends PluginPanel
 			showRecommendations(lastResponse);
 		});
 
-		JButton previous = new JButton("<");
-		previous.setFont(BODY_FONT);
-		previous.setPreferredSize(new Dimension(36, 24));
+		JButton previous = new PageArrowButton(false);
 		previous.setEnabled(staplesPage > 0);
 		previous.addActionListener(event -> {
 			int updatedPage = Math.max(0, staplesPage - 1);
@@ -1635,9 +1893,7 @@ public class MerchLensPanel extends PluginPanel
 				renderCurrentAtTop();
 			}
 		});
-		JButton next = new JButton(">");
-		next.setFont(BODY_FONT);
-		next.setPreferredSize(new Dimension(36, 24));
+		JButton next = new PageArrowButton(true);
 		next.setEnabled(staplesPage < maxPage);
 		next.addActionListener(event -> {
 			int updatedPage = Math.min(maxPage, staplesPage + 1);
@@ -1667,8 +1923,9 @@ public class MerchLensPanel extends PluginPanel
 	private JPanel filterControls()
 	{
 		JPanel panel = new JPanel(new BorderLayout());
-		panel.setOpaque(false);
-		panel.setBorder(BorderFactory.createEmptyBorder(0, 8, 6, 8));
+		panel.setOpaque(true);
+		panel.setBackground(PINNED_SURFACE);
+		panel.setBorder(BorderFactory.createEmptyBorder(1, 10, 5, 10));
 		panel.setAlignmentX(LEFT_ALIGNMENT);
 		fixedHeight(panel, FILTER_CONTROLS_HEIGHT);
 
@@ -1712,9 +1969,21 @@ public class MerchLensPanel extends PluginPanel
 		checkbox.setMargin(new Insets(0, 0, 0, 0));
 		checkbox.setAlignmentX(LEFT_ALIGNMENT);
 		checkbox.setVerticalAlignment(JCheckBox.CENTER);
+		checkbox.setIcon(new FilterCheckIcon(false));
+		checkbox.setRolloverIcon(new FilterCheckIcon(false));
+		checkbox.setSelectedIcon(new FilterCheckIcon(true));
+		checkbox.setRolloverSelectedIcon(new FilterCheckIcon(true));
 		fixedSize(checkbox, CONTROL_WIDTH, 22);
 		checkbox.addActionListener(event -> onChange.accept(checkbox.isSelected()));
 		return checkbox;
+	}
+
+	private void stylePinnedCombo(JComboBox<String> comboBox, String tooltip)
+	{
+		comboBox.setFont(BODY_FONT);
+		comboBox.setForeground(Color.WHITE);
+		comboBox.setBackground(INPUT_SURFACE);
+		comboBox.setToolTipText(tooltip);
 	}
 
 	private JPanel paginationControls(int total, int maxPage, int pageIndex, Runnable previousAction, Runnable nextAction)
@@ -1724,15 +1993,11 @@ public class MerchLensPanel extends PluginPanel
 
 	private JPanel paginationControls(int total, int maxPage, int pageIndex, boolean incomplete, Runnable previousAction, Runnable nextAction)
 	{
-		JButton previous = new JButton("<");
-		previous.setFont(BODY_FONT);
-		previous.setPreferredSize(new Dimension(36, 24));
+		JButton previous = new PageArrowButton(false);
 		previous.setEnabled(pageIndex > 0);
 		previous.addActionListener(event -> previousAction.run());
 
-		JButton next = new JButton(">");
-		next.setFont(BODY_FONT);
-		next.setPreferredSize(new Dimension(36, 24));
+		JButton next = new PageArrowButton(true);
 		next.setEnabled(pageIndex < maxPage);
 		next.addActionListener(event -> nextAction.run());
 
@@ -1749,8 +2014,9 @@ public class MerchLensPanel extends PluginPanel
 		inner.add(next, BorderLayout.EAST);
 
 		JPanel panel = new JPanel(new BorderLayout());
-		panel.setOpaque(false);
-		panel.setBorder(BorderFactory.createEmptyBorder(0, 8, 6, 8));
+		panel.setOpaque(true);
+		panel.setBackground(PINNED_SURFACE);
+		panel.setBorder(BorderFactory.createEmptyBorder(0, 10, 7, 10));
 		panel.setAlignmentX(LEFT_ALIGNMENT);
 		fixedHeight(panel, PAGE_ROW_HEIGHT);
 		panel.add(inner, BorderLayout.CENTER);
@@ -1812,7 +2078,7 @@ public class MerchLensPanel extends PluginPanel
 			}
 			filtered.add(recommendation);
 		}
-		filtered.sort(screenerComparator());
+		filtered.sort(marketComparator(screenerSortIndex));
 		return filtered;
 	}
 
@@ -1862,15 +2128,6 @@ public class MerchLensPanel extends PluginPanel
 		return screenerBuySellRatio <= 0 || buySellRatio(recommendation) >= screenerBuySellRatio;
 	}
 
-	private Comparator<RecommendationDto> screenerComparator()
-	{
-		return Comparator
-			.comparingLong(this::flowProfit).reversed()
-			.thenComparing(Comparator.comparingLong(this::limitProfit).reversed())
-			.thenComparing(Comparator.comparingDouble(RecommendationDto::getRoi).reversed())
-			.thenComparing(Comparator.comparingInt(RecommendationDto::getHourlyVolume).reversed());
-	}
-
 	private double buySellRatio(RecommendationDto recommendation)
 	{
 		int buyVolume = recommendation.getBuyVolumePerHour();
@@ -1906,7 +2163,12 @@ public class MerchLensPanel extends PluginPanel
 
 	private Comparator<RecommendationDto> stapleComparator()
 	{
-		String selected = STAPLE_SORTS[stapleSortIndex];
+		return marketComparator(stapleSortIndex);
+	}
+
+	private Comparator<RecommendationDto> marketComparator(int sortIndex)
+	{
+		String selected = MARKET_SORTS[sortIndex];
 		if ("ROI".equals(selected))
 		{
 			return Comparator
@@ -1919,7 +2181,7 @@ public class MerchLensPanel extends PluginPanel
 				.comparingInt(RecommendationDto::getBuyPrice)
 				.thenComparing(Comparator.comparingDouble(RecommendationDto::getRoi).reversed());
 		}
-		if ("Margin each".equals(selected))
+		if ("Net margin".equals(selected))
 		{
 			return Comparator
 				.comparingInt(RecommendationDto::getNetMargin).reversed()
@@ -2011,56 +2273,222 @@ public class MerchLensPanel extends PluginPanel
 		return panel;
 	}
 
-	private JComponent pinnedHelp(String text)
+	private JComponent pinnedHeading(String titleText, String description)
 	{
-		JPanel panel = new JPanel(new BorderLayout());
-		panel.setOpaque(false);
-		panel.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
+		JPanel panel = new JPanel();
+		panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+		panel.setOpaque(true);
+		panel.setBackground(PINNED_SURFACE);
+		panel.setBorder(BorderFactory.createEmptyBorder(7, 10, 5, 10));
 		panel.setAlignmentX(LEFT_ALIGNMENT);
 		fixedHeight(panel, PINNED_HELP_HEIGHT);
-		JComponent label = wrapLabel(text, Color.LIGHT_GRAY, BODY_FONT, LOOKUP_CONTROL_WIDTH);
-		panel.add(label, BorderLayout.CENTER);
+		JLabel title = new JLabel(titleText);
+		title.setForeground(Color.WHITE);
+		title.setFont(SECTION_FONT);
+		title.setAlignmentX(CENTER_ALIGNMENT);
+		JLabel help = new JLabel(description);
+		help.setForeground(Color.LIGHT_GRAY);
+		help.setFont(STAT_LABEL_FONT);
+		help.setAlignmentX(CENTER_ALIGNMENT);
+		panel.add(title);
+		panel.add(Box.createVerticalStrut(2));
+		panel.add(help);
 		return panel;
 	}
 
 	private JPanel marketNav()
 	{
-		JPanel panel = new JPanel(new GridLayout(1, 3, 0, 0));
-		panel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		panel.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
+		JPanel panel = new JPanel(new GridLayout(1, 4, 6, 0));
+		panel.setBackground(new Color(27, 27, 27));
+		panel.setBorder(BorderFactory.createEmptyBorder(6, 10, 6, 10));
 		panel.setAlignmentX(LEFT_ALIGNMENT);
 		fixedHeight(panel, NAV_HEIGHT);
-		panel.add(navButton("Faves", "Favorites", favoritesExpanded, () -> selectMarketSection("favorites")));
-		panel.add(navButton("High Vol", "High-Volume Staples", highVolumeExpanded, () -> selectMarketSection("highVolume")));
-		panel.add(navButton("Screener", "Market Screener", broaderExpanded, () -> selectMarketSection("broader")));
+		panel.add(navButton("favorites", "Favorites", favoritesExpanded && !controlsCollapsed, favoritesExpanded && !controlsCollapsed, () -> selectMarketSection("favorites")));
+		panel.add(navButton("highVolume", "High-volume items", highVolumeExpanded && !controlsCollapsed, highVolumeExpanded && !controlsCollapsed, () -> selectMarketSection("highVolume")));
+		panel.add(navButton("screener", "Screener", broaderExpanded && !controlsCollapsed, broaderExpanded && !controlsCollapsed, () -> selectMarketSection("broader")));
+		panel.add(navButton("flipLog", "Flip Log", flipLogExpanded && !controlsCollapsed, flipLogExpanded && !controlsCollapsed, () -> selectMarketSection("flipLog")));
 		return panel;
 	}
 
-	private JButton navButton(String text, String tooltip, boolean selected, Runnable action)
+	private JPanel utilityNav()
 	{
-		JButton button = new JButton(text);
-		button.setToolTipText(tooltip);
-		button.setFont(BODY_FONT);
-		button.setFocusPainted(false);
-		button.setMargin(new Insets(0, 0, 0, 0));
-		button.setHorizontalAlignment(JButton.CENTER);
-		button.setForeground(selected ? Color.WHITE : Color.LIGHT_GRAY);
-		button.setBackground(selected ? ColorScheme.DARK_GRAY_COLOR : ColorScheme.DARKER_GRAY_COLOR);
-		button.setOpaque(true);
-		button.setBorder(BorderFactory.createCompoundBorder(
-			BorderFactory.createMatteBorder(0, 0, selected ? 2 : 1, 0, selected ? TAB_ACCENT : ColorScheme.DARKER_GRAY_COLOR),
-			BorderFactory.createEmptyBorder(7, 0, 6, 0)
+		JPanel panel = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 5));
+		panel.setBackground(PINNED_SURFACE);
+		panel.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createMatteBorder(1, 0, 1, 0, new Color(47, 47, 47)),
+			BorderFactory.createEmptyBorder(0, 10, 0, 10)
 		));
+		panel.setAlignmentX(LEFT_ALIGNMENT);
+		fixedHeight(panel, NAV_HEIGHT);
+		panel.add(utilityButton("calculator", "Profit calculator", calculatorExpanded, this::toggleCalculator));
+		return panel;
+	}
+
+	private JButton navButton(String icon, String tooltip, boolean selected, boolean expanded, Runnable action)
+	{
+		JButton button = new MarketNavButton(icon, selected, expanded);
+		button.setToolTipText(tooltip + (expanded ? " (hide controls)" : " (show controls)"));
+		button.addActionListener(event -> action.run());
+		return button;
+	}
+
+	private JButton utilityButton(String icon, String tooltip, boolean expanded, Runnable action)
+	{
+		JButton button = new MarketNavButton(icon, expanded, expanded);
+		fixedButtonSize(button, 44, 30);
+		button.setToolTipText((expanded ? "Hide " : "Show ") + tooltip.toLowerCase(Locale.US) + ".");
 		button.addActionListener(event -> action.run());
 		return button;
 	}
 
 	private void selectMarketSection(String section)
 	{
+		boolean currentlySelected = ("favorites".equals(section) && favoritesExpanded)
+			|| ("highVolume".equals(section) && highVolumeExpanded)
+			|| ("broader".equals(section) && broaderExpanded)
+			|| ("flipLog".equals(section) && flipLogExpanded);
+		if (currentlySelected)
+		{
+			setControlsCollapsed(!controlsCollapsed);
+			return;
+		}
 		favoritesExpanded = "favorites".equals(section);
 		highVolumeExpanded = "highVolume".equals(section);
 		broaderExpanded = "broader".equals(section);
-		showRecommendations(lastResponse);
+		flipLogExpanded = "flipLog".equals(section);
+		if (controlsCollapsed)
+		{
+			controlsCollapsed = false;
+			if (controlsCollapsedCallback != null)
+			{
+				controlsCollapsedCallback.accept(false);
+			}
+		}
+		renderCurrentAtTop();
+	}
+
+	private List<FlipRecord> filteredFlipLogRecords()
+	{
+		long cutoff = selectedFlipLogCutoff();
+		String query = flipLogSearchField.getText() == null
+			? ""
+			: flipLogSearchField.getText().trim().toLowerCase(Locale.US);
+		List<FlipRecord> filtered = new ArrayList<>();
+		for (FlipRecord record : flipLogRecords)
+		{
+			if (record == null || record.getCompletedAt() < cutoff)
+			{
+				continue;
+			}
+			String itemName = record.getItemName() == null ? "" : record.getItemName().toLowerCase(Locale.US);
+			if (!query.isEmpty() && !itemName.contains(query))
+			{
+				continue;
+			}
+			filtered.add(record);
+		}
+		return filtered;
+	}
+
+	private long selectedFlipLogCutoff()
+	{
+		long now = Instant.now().getEpochSecond();
+		switch (flipLogTimeframeIndex)
+		{
+			case 0:
+				return panelStartedAt;
+			case 1:
+				return now - 60L * 60L;
+			case 2:
+				return now - 4L * 60L * 60L;
+			case 3:
+				return now - 12L * 60L * 60L;
+			case 4:
+				return now - 24L * 60L * 60L;
+			case 5:
+				return now - 7L * 24L * 60L * 60L;
+			case 6:
+				return now - 30L * 24L * 60L * 60L;
+			default:
+				return Long.MIN_VALUE;
+		}
+	}
+
+	private List<FlipItemTotal> summarizedFlipItems(List<FlipRecord> records)
+	{
+		Map<Integer, FlipItemTotal> byItem = new LinkedHashMap<>();
+		for (FlipRecord record : records)
+		{
+			FlipItemTotal total = byItem.computeIfAbsent(
+				record.getItemId(),
+				itemId -> new FlipItemTotal(itemId, record.getItemName())
+			);
+			total.add(record);
+		}
+		List<FlipItemTotal> items = new ArrayList<>(byItem.values());
+		if (flipLogSortIndex == 1)
+		{
+			items.sort(Comparator.comparingLong(FlipItemTotal::getProfit).reversed()
+				.thenComparing(Comparator.comparingLong(FlipItemTotal::getLastCompletedAt).reversed()));
+		}
+		else
+		{
+			items.sort(Comparator.comparingLong(FlipItemTotal::getLastCompletedAt).reversed()
+				.thenComparing(Comparator.comparingLong(FlipItemTotal::getProfit).reversed()));
+		}
+		return items;
+	}
+
+	private JPanel flipLogSummaryCard(List<FlipRecord> records)
+	{
+		long profit = 0;
+		long cost = 0;
+		long quantity = 0;
+		Set<String> saleOfferKeys = new HashSet<>();
+		for (FlipRecord record : records)
+		{
+			profit += record.getProfit();
+			cost += record.getCost();
+			quantity += record.getQuantity();
+			saleOfferKeys.add(record.getSaleOfferKey() == null
+				? record.getItemId() + ":" + record.getCompletedAt()
+				: record.getSaleOfferKey());
+		}
+		JPanel card = baseCard(true);
+		JLabel label = new JLabel("Total Profit");
+		label.setForeground(TAB_ACCENT);
+		label.setFont(TITLE_FONT);
+		label.setAlignmentX(LEFT_ALIGNMENT);
+		card.add(label);
+		JLabel value = new JLabel(signedGp(profit));
+		value.setForeground(profit >= 0 ? riskColor("SAFE") : riskColor("ADVANCED"));
+		value.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 20));
+		value.setBorder(BorderFactory.createEmptyBorder(4, 0, 8, 0));
+		value.setAlignmentX(LEFT_ALIGNMENT);
+		card.add(value);
+		card.add(metricRow("Net ROI", cost <= 0 ? "-" : String.format(Locale.US, "%.2f%%", profit * 100.0 / cost), Color.WHITE));
+		card.add(metricRow("Flips", GP.format(saleOfferKeys.size()), Color.WHITE));
+		card.add(metricRow("Quantity", GP.format(quantity), Color.WHITE));
+		return finish(card);
+	}
+
+	private JPanel flipItemCard(FlipItemTotal item)
+	{
+		JPanel card = baseCard(false);
+		JPanel heading = new JPanel(new BorderLayout(6, 0));
+		heading.setOpaque(false);
+		heading.setAlignmentX(LEFT_ALIGNMENT);
+		heading.setMaximumSize(new Dimension(Integer.MAX_VALUE, ITEM_ICON_SIZE + 4));
+		heading.add(itemIcon(item.getItemId()), BorderLayout.WEST);
+		heading.add(wrapLabel(item.getItemName(), Color.WHITE, TITLE_FONT, TEXT_WIDTH - ITEM_ICON_SIZE - 8), BorderLayout.CENTER);
+		card.add(heading);
+		card.add(Box.createVerticalStrut(6));
+		card.add(metricRow("Profit", signedGp(item.getProfit()), item.getProfit() >= 0 ? riskColor("SAFE") : riskColor("ADVANCED")));
+		card.add(metricRow("Net ROI", item.getCost() <= 0 ? "-" : String.format(Locale.US, "%.2f%%", item.getProfit() * 100.0 / item.getCost()), Color.WHITE));
+		card.add(metricRow("Flips", GP.format(item.getFlipCount()), Color.WHITE));
+		card.add(metricRow("Quantity", GP.format(item.getQuantity()), Color.WHITE));
+		card.add(metricRow("Last flip", updatedText((int) Math.max(0, (Instant.now().getEpochSecond() - item.getLastCompletedAt()) / 60)), Color.LIGHT_GRAY));
+		return finish(card);
 	}
 
 	private JPanel recommendationCard(RecommendationDto rec)
@@ -2075,7 +2503,12 @@ public class MerchLensPanel extends PluginPanel
 		card.add(statusPills(rec));
 		card.add(metricRow("Buy at", gp(rec.getBuyPrice()), Color.WHITE));
 		card.add(metricRow("Sell at", gp(rec.getSellPrice()), Color.WHITE));
-		card.add(metricRow("Margin", signedGp(rec.getNetMargin()), rec.getNetMargin() >= 0 ? riskColor("SAFE") : riskColor("ADVANCED")));
+		card.add(metricRow(
+			"Net margin",
+			signedGp(rec.getNetMargin()),
+			rec.getNetMargin() >= 0 ? riskColor("SAFE") : riskColor("ADVANCED"),
+			netMarginTooltip(rec)
+		));
 		card.add(metricRow("ROI", String.format("%.2f%%", rec.getRoi() * 100), Color.WHITE));
 		card.add(metricRow(
 			"Limit P&L",
@@ -2402,6 +2835,7 @@ public class MerchLensPanel extends PluginPanel
 		JLabel leftLabel = new JLabel(left);
 		leftLabel.setForeground(Color.GRAY);
 		leftLabel.setFont(STAT_LABEL_FONT);
+		leftLabel.setToolTipText(tooltip);
 		fixedSize(leftLabel, METRIC_LABEL_WIDTH, 17);
 
 		JLabel rightLabel = new JLabel(right == null ? "" : right);
@@ -2414,6 +2848,17 @@ public class MerchLensPanel extends PluginPanel
 		row.add(leftLabel, BorderLayout.WEST);
 		row.add(rightLabel, BorderLayout.CENTER);
 		return row;
+	}
+
+	private String netMarginTooltip(RecommendationDto rec)
+	{
+		int grossMargin = rec.getSellPrice() - rec.getBuyPrice();
+		return "<html>"
+			+ "Per item after GE tax.<br>"
+			+ "Gross spread: " + signedGp(grossMargin) + "<br>"
+			+ "Tax per item: -" + gp(rec.getTax()) + "<br>"
+			+ "Net margin: " + signedGp(rec.getNetMargin())
+			+ "</html>";
 	}
 
 	private String limitPnlTooltip(RecommendationDto rec)
@@ -2438,8 +2883,9 @@ public class MerchLensPanel extends PluginPanel
 		int weakerHourlySide = Math.max(0, Math.min(rec.getBuyVolumePerHour(), rec.getSellVolumePerHour()));
 		return "<html>"
 			+ "Weaker-side observed volume: " + GP.format(weakerHourlySide) + " / hr<br>"
-			+ "4h flow quantity: " + GP.format(rec.getFourHourFlowQuantity()) + " / " + GP.format(rec.getBuyLimit()) + " limit<br>"
+			+ "Est. 4h traded qty: " + GP.format(rec.getFourHourFlowQuantity()) + " / " + GP.format(rec.getBuyLimit()) + " limit<br>"
 			+ "Flow P&L: " + signedGp(rec.getFourHourFlowProfit()) + "<br><br>"
+			+ "Capped by the lower buy/sell hourly volume and the GE buy limit.<br>"
 			+ "Estimated from observed volume. Fills are not guaranteed."
 			+ "</html>";
 	}
@@ -2455,8 +2901,8 @@ public class MerchLensPanel extends PluginPanel
 		row.add(statusPill(
 			"Thin volume",
 			riskColor("BALANCED"),
-			"Observed volume supports only " + GP.format(rec.getFourHourFlowQuantity()) + " of "
-				+ GP.format(rec.getBuyLimit()) + " items per 4h limit."
+			"Est. 4h traded qty: " + GP.format(rec.getFourHourFlowQuantity()) + " of "
+				+ GP.format(rec.getBuyLimit()) + " buy-limit items."
 		));
 		row.add(Box.createHorizontalGlue());
 		return row;
@@ -2608,6 +3054,13 @@ public class MerchLensPanel extends PluginPanel
 		component.setMaximumSize(size);
 	}
 
+	private void flexibleRow(JComponent component, int preferredWidth, int height)
+	{
+		component.setMinimumSize(new Dimension(0, height));
+		component.setPreferredSize(new Dimension(preferredWidth, height));
+		component.setMaximumSize(new Dimension(Integer.MAX_VALUE, height));
+	}
+
 	private void fixedHeight(JComponent component, int height)
 	{
 		component.setMinimumSize(new Dimension(0, height));
@@ -2658,10 +3111,10 @@ public class MerchLensPanel extends PluginPanel
 	private boolean isTextEditingActive()
 	{
 		return searchField.isFocusOwner()
-			|| bankSizeField.isFocusOwner()
 			|| calculatorBuyPriceField.isFocusOwner()
 			|| calculatorSellPriceField.isFocusOwner()
 			|| calculatorQuantityField.isFocusOwner()
+			|| flipLogSearchField.isFocusOwner()
 			|| screenerMinPriceField.isFocusOwner()
 			|| screenerMaxPriceField.isFocusOwner()
 			|| screenerMinBuyVolumeField.isFocusOwner()
@@ -2906,6 +3359,69 @@ public class MerchLensPanel extends PluginPanel
 		}
 	}
 
+	private static class FlipItemTotal
+	{
+		private final int itemId;
+		private final String itemName;
+		private long quantity;
+		private long cost;
+		private long profit;
+		private long lastCompletedAt;
+		private final Set<String> saleOfferKeys = new HashSet<>();
+
+		private FlipItemTotal(int itemId, String itemName)
+		{
+			this.itemId = itemId;
+			this.itemName = itemName == null || itemName.trim().isEmpty() ? "Item " + itemId : itemName;
+		}
+
+		private void add(FlipRecord record)
+		{
+			quantity += record.getQuantity();
+			cost += record.getCost();
+			profit += record.getProfit();
+			lastCompletedAt = Math.max(lastCompletedAt, record.getCompletedAt());
+			saleOfferKeys.add(record.getSaleOfferKey() == null
+				? record.getItemId() + ":" + record.getCompletedAt()
+				: record.getSaleOfferKey());
+		}
+
+		private int getItemId()
+		{
+			return itemId;
+		}
+
+		private String getItemName()
+		{
+			return itemName;
+		}
+
+		private long getQuantity()
+		{
+			return quantity;
+		}
+
+		private long getCost()
+		{
+			return cost;
+		}
+
+		private long getProfit()
+		{
+			return profit;
+		}
+
+		private long getLastCompletedAt()
+		{
+			return lastCompletedAt;
+		}
+
+		private int getFlipCount()
+		{
+			return saleOfferKeys.size();
+		}
+	}
+
 	private static class CoinBadge extends JComponent
 	{
 		private CoinBadge()
@@ -2956,6 +3472,7 @@ public class MerchLensPanel extends PluginPanel
 			setBorderPainted(false);
 			setFocusPainted(false);
 			setOpaque(false);
+			setRolloverEnabled(true);
 			setMargin(new Insets(0, 0, 0, 0));
 		}
 
@@ -2990,13 +3507,180 @@ public class MerchLensPanel extends PluginPanel
 		}
 	}
 
-	private static class CalculatorButton extends JButton
+	private static class SearchButton extends JButton
 	{
-		private CalculatorButton()
+		private SearchButton()
 		{
-			setPreferredSize(new Dimension(32, 26));
-			setMinimumSize(new Dimension(32, 26));
-			setMaximumSize(new Dimension(32, 26));
+			fixedButtonSize(this, 28, CONTROL_HEIGHT);
+			setContentAreaFilled(false);
+			setBorderPainted(false);
+			setFocusPainted(false);
+			setOpaque(false);
+			setRolloverEnabled(true);
+			setMargin(new Insets(0, 0, 0, 0));
+		}
+
+		@Override
+		protected void paintComponent(Graphics graphics)
+		{
+			Graphics2D g = (Graphics2D) graphics.create();
+			g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+			drawUtilityBackground(g, this);
+			g.setColor(getModel().isRollover() ? Color.WHITE : Color.LIGHT_GRAY);
+			g.setStroke(new BasicStroke(1.4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+			g.drawOval(8, 6, 9, 9);
+			g.drawLine(16, 14, 20, 18);
+			g.dispose();
+		}
+	}
+
+	private static class RefreshButton extends JButton
+	{
+		private RefreshButton()
+		{
+			fixedButtonSize(this, 34, 34);
+			setContentAreaFilled(false);
+			setBorderPainted(false);
+			setFocusPainted(false);
+			setOpaque(false);
+			setRolloverEnabled(true);
+			setMargin(new Insets(0, 0, 0, 0));
+		}
+
+		@Override
+		protected void paintComponent(Graphics graphics)
+		{
+			Graphics2D g = (Graphics2D) graphics.create();
+			g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+			g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+			drawUtilityBackground(g, this);
+			g.setColor(getModel().isRollover() ? Color.WHITE : Color.LIGHT_GRAY);
+			g.setStroke(new BasicStroke(1.85f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+			g.drawArc(9, 9, 16, 16, 38, 276);
+
+			Path2D arrow = new Path2D.Double();
+			arrow.moveTo(26.0, 8.4);
+			arrow.lineTo(25.4, 14.7);
+			arrow.lineTo(19.8, 11.5);
+			arrow.closePath();
+			g.fill(arrow);
+			g.dispose();
+		}
+	}
+
+	private static class MarketNavButton extends JButton
+	{
+		private final String icon;
+		private final boolean selected;
+		private final boolean expanded;
+
+		private MarketNavButton(String icon, boolean selected, boolean expanded)
+		{
+			this.icon = icon;
+			this.selected = selected;
+			this.expanded = expanded;
+			setContentAreaFilled(false);
+			setBorderPainted(false);
+			setFocusPainted(false);
+			setOpaque(false);
+			setRolloverEnabled(true);
+			setMargin(new Insets(0, 0, 0, 0));
+		}
+
+		@Override
+		protected void paintComponent(Graphics graphics)
+		{
+			Graphics2D g = (Graphics2D) graphics.create();
+			g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+			boolean hovered = getModel().isRollover();
+			if (hovered)
+			{
+				g.setColor(expanded ? new Color(53, 53, 53) : new Color(48, 48, 48));
+				g.fillRoundRect(1, 1, getWidth() - 2, getHeight() - 2, 4, 4);
+				if (!expanded)
+				{
+					g.setColor(new Color(67, 67, 67));
+					g.drawRoundRect(1, 1, getWidth() - 3, getHeight() - 3, 4, 4);
+				}
+			}
+			else if (expanded)
+			{
+				g.setColor(new Color(43, 43, 43));
+				g.fillRoundRect(1, 1, getWidth() - 2, getHeight() - 2, 4, 4);
+			}
+			if (expanded)
+			{
+				g.setColor(TAB_ACCENT);
+				g.fillRect(6, getHeight() - 2, getWidth() - 12, 2);
+			}
+			g.setColor(selected ? TAB_ACCENT : hovered ? Color.WHITE : Color.LIGHT_GRAY);
+			g.setStroke(new BasicStroke(1.45f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+			int center = getWidth() / 2;
+			if ("calculator".equals(icon))
+			{
+				int x = center - 8;
+				int y = 5;
+				g.drawRoundRect(x, y, 16, 18, 2, 2);
+				g.setColor(TAB_ACCENT);
+				g.fillRoundRect(x + 3, y + 3, 10, 4, 1, 1);
+				g.setColor(selected ? TAB_ACCENT : hovered ? Color.WHITE : Color.LIGHT_GRAY);
+				for (int row = 0; row < 3; row++)
+				{
+					for (int col = 0; col < 3; col++)
+					{
+						g.fillRect(x + 3 + col * 4, y + 9 + row * 3, 2, 2);
+					}
+				}
+			}
+			else if ("favorites".equals(icon))
+			{
+				Path2D heart = new Path2D.Double();
+				heart.moveTo(center, 22);
+				heart.curveTo(center - 2, 19, center - 9, 15, center - 9, 10);
+				heart.curveTo(center - 9, 6, center - 4, 5, center, 9);
+				heart.curveTo(center + 4, 5, center + 9, 6, center + 9, 10);
+				heart.curveTo(center + 9, 15, center + 2, 19, center, 22);
+				g.draw(heart);
+			}
+			else if ("highVolume".equals(icon))
+			{
+				g.fillRect(center - 9, 15, 4, 7);
+				g.fillRect(center - 2, 10, 4, 12);
+				g.fillRect(center + 5, 6, 4, 16);
+			}
+			else if ("screener".equals(icon))
+			{
+				Path2D funnel = new Path2D.Double();
+				funnel.moveTo(center - 10, 7);
+				funnel.lineTo(center + 10, 7);
+				funnel.lineTo(center + 3, 14);
+				funnel.lineTo(center + 3, 21);
+				funnel.lineTo(center - 3, 18);
+				funnel.lineTo(center - 3, 14);
+				funnel.closePath();
+				g.draw(funnel);
+			}
+			else
+			{
+				int x = center - 8;
+				g.drawRoundRect(x, 6, 16, 17, 2, 2);
+				g.drawLine(x + 4, 11, x + 12, 11);
+				g.drawLine(x + 4, 15, x + 12, 15);
+				g.drawLine(x + 4, 19, x + 9, 19);
+			}
+			g.dispose();
+		}
+	}
+
+	private static class PageArrowButton extends JButton
+	{
+		private final boolean next;
+
+		private PageArrowButton(boolean next)
+		{
+			this.next = next;
+			fixedButtonSize(this, 36, 24);
+			setToolTipText(next ? "Next page." : "Previous page.");
 			setContentAreaFilled(false);
 			setBorderPainted(false);
 			setFocusPainted(false);
@@ -3009,40 +3693,129 @@ public class MerchLensPanel extends PluginPanel
 		{
 			Graphics2D g = (Graphics2D) graphics.create();
 			g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-			g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
-			if (getModel().isPressed())
+			drawUtilityBackground(g, this);
+			g.setColor(isEnabled() ? (getModel().isRollover() ? Color.WHITE : Color.LIGHT_GRAY) : new Color(76, 76, 76));
+			g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+			int center = getWidth() / 2;
+			int direction = next ? 1 : -1;
+			g.drawLine(center - direction * 3, 8, center + direction * 2, 12);
+			g.drawLine(center + direction * 2, 12, center - direction * 3, 16);
+			g.dispose();
+		}
+	}
+
+	private static class PinnedAreaButton extends JButton
+	{
+		private final boolean restore;
+
+		private PinnedAreaButton(boolean restore)
+		{
+			this.restore = restore;
+			fixedButtonSize(this, 28, CONTROL_HEIGHT);
+			setContentAreaFilled(false);
+			setBorderPainted(false);
+			setFocusPainted(false);
+			setOpaque(false);
+			setRolloverEnabled(true);
+			setMargin(new Insets(0, 0, 0, 0));
+		}
+
+		@Override
+		protected void paintComponent(Graphics graphics)
+		{
+			Graphics2D g = (Graphics2D) graphics.create();
+			g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+			drawUtilityBackground(g, this);
+			g.setColor(getModel().isRollover() ? Color.WHITE : Color.LIGHT_GRAY);
+			g.setStroke(new BasicStroke(1.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+			int center = getWidth() / 2;
+			if (restore)
 			{
-				g.setColor(ColorScheme.DARK_GRAY_COLOR);
-			}
-			else if (getModel().isRollover())
-			{
-				g.setColor(new Color(42, 42, 42));
+				g.drawLine(center - 4, 9, center, 14);
+				g.drawLine(center, 14, center + 4, 9);
 			}
 			else
 			{
-				g.setColor(new Color(28, 28, 28));
-			}
-			g.fillRoundRect(1, 1, getWidth() - 2, getHeight() - 2, 3, 3);
-			g.setColor(new Color(55, 55, 55));
-			g.drawRoundRect(1, 1, getWidth() - 3, getHeight() - 3, 3, 3);
-
-			int x = (getWidth() - 15) / 2;
-			int y = 4;
-			g.setColor(getModel().isRollover() ? Color.WHITE : Color.LIGHT_GRAY);
-			g.setStroke(new BasicStroke(1.2f));
-			g.drawRoundRect(x, y, 15, 17, 2, 2);
-			g.setColor(TAB_ACCENT);
-			g.fillRoundRect(x + 3, y + 3, 9, 4, 1, 1);
-			g.setColor(getModel().isRollover() ? Color.WHITE : Color.LIGHT_GRAY);
-			for (int row = 0; row < 3; row++)
-			{
-				for (int col = 0; col < 3; col++)
-				{
-					g.fillRect(x + 3 + col * 4, y + 9 + row * 3, 2, 2);
-				}
+				g.drawLine(center - 5, 12, center + 5, 12);
 			}
 			g.dispose();
 		}
+	}
+
+	private static class FilterCheckIcon implements Icon
+	{
+		private static final int SIZE = 19;
+		private final boolean checked;
+
+		private FilterCheckIcon(boolean checked)
+		{
+			this.checked = checked;
+		}
+
+		@Override
+		public int getIconWidth()
+		{
+			return SIZE;
+		}
+
+		@Override
+		public int getIconHeight()
+		{
+			return SIZE;
+		}
+
+		@Override
+		public void paintIcon(Component component, Graphics graphics, int x, int y)
+		{
+			Graphics2D g = (Graphics2D) graphics.create();
+			boolean hovered = component instanceof JCheckBox
+				&& ((JCheckBox) component).getModel().isRollover();
+			g.setColor(checked ? new Color(37, 37, 37) : INPUT_SURFACE);
+			g.fillRect(x + 1, y + 1, SIZE - 2, SIZE - 2);
+			g.setColor(checked
+				? new Color(94, 94, 94)
+				: hovered ? new Color(96, 96, 96) : new Color(67, 67, 67));
+			g.drawRect(x + 1, y + 1, SIZE - 3, SIZE - 3);
+
+			if (checked)
+			{
+				g.setColor(hovered ? Color.WHITE : Color.LIGHT_GRAY);
+				g.setStroke(new BasicStroke(1.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+				Path2D check = new Path2D.Double();
+				check.moveTo(x + 5, y + 10);
+				check.lineTo(x + 8, y + 13);
+				check.lineTo(x + 14, y + 6);
+				g.draw(check);
+			}
+			g.dispose();
+		}
+	}
+
+	private static void fixedButtonSize(JButton button, int width, int height)
+	{
+		Dimension size = new Dimension(width, height);
+		button.setMinimumSize(size);
+		button.setPreferredSize(size);
+		button.setMaximumSize(size);
+	}
+
+	private static void drawUtilityBackground(Graphics2D g, JButton button)
+	{
+		if (button.getModel().isPressed())
+		{
+			g.setColor(new Color(25, 25, 25));
+		}
+		else if (button.getModel().isRollover())
+		{
+			g.setColor(new Color(48, 48, 48));
+		}
+		else
+		{
+			g.setColor(INPUT_SURFACE);
+		}
+		g.fillRoundRect(1, 1, button.getWidth() - 2, button.getHeight() - 2, 4, 4);
+		g.setColor(INPUT_BORDER);
+		g.drawRoundRect(1, 1, button.getWidth() - 3, button.getHeight() - 3, 4, 4);
 	}
 
 	private static class CloseButton extends JButton

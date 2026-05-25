@@ -77,6 +77,16 @@ class TrackedOffer
 		return trackedStartKnown;
 	}
 
+	boolean isBuyOffer()
+	{
+		return isBuyState(state);
+	}
+
+	String offerKey()
+	{
+		return slot + ":" + firstSeenAt + ":" + itemId + ":" + price + ":" + totalQuantity + ":" + (isBuyOffer() ? "BUY" : "SELL");
+	}
+
 	boolean isVisible()
 	{
 		return itemId > 0 && totalQuantity > 0 && state != null && !"EMPTY".equals(state);

@@ -56,6 +56,20 @@ public class OfferTrackerTest
 		Assert.assertFalse(tracked.matches(offer(GrandExchangeOfferState.BUYING, 11840, 1_000_000, 10, 7, 2_000_000)));
 	}
 
+	@Test
+	public void trackedPendingBuyEmitsActualFillValueWhenObservedCompleted()
+	{
+		OfferTracker tracker = new OfferTracker(null, new Gson());
+		tracker.record(1, offer(GrandExchangeOfferState.BUYING, 560, 100, 5_000, 0, 0));
+
+		OfferFill fill = tracker.record(1, offer(GrandExchangeOfferState.BOUGHT, 560, 100, 5_000, 1_200, 117_600));
+
+		Assert.assertNotNull(fill);
+		Assert.assertEquals(OfferFill.Side.BUY, fill.getSide());
+		Assert.assertEquals(1_200, fill.getQuantity());
+		Assert.assertEquals(117_600, fill.getTotalValue());
+	}
+
 	private GrandExchangeOffer offer(GrandExchangeOfferState state, int itemId, int price, int totalQuantity, int filledQuantity, int spent)
 	{
 		return new StubOffer(state, itemId, price, totalQuantity, filledQuantity, spent);
