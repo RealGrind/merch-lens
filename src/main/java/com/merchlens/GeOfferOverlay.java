@@ -302,6 +302,12 @@ class GeOfferOverlay extends Overlay
 		}
 		long seconds = Math.max(0, Instant.now().getEpochSecond() - offer.getFirstSeenAt());
 		long hours = seconds / 3600;
+		if (hours >= 24)
+		{
+			long days = hours / 24;
+			long remainingHours = hours % 24;
+			return days + "d " + remainingHours + "h";
+		}
 		long minutes = (seconds % 3600) / 60;
 		if (hours > 0)
 		{

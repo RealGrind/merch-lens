@@ -30,6 +30,7 @@ import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
@@ -118,6 +119,8 @@ public class MerchLensPlugin extends Plugin
 			this::resetFlipLog,
 			this::updateControlsCollapsed,
 			config.controlsCollapsed(),
+			this::updateGeOfferOverlayVisible,
+			config.showGeOfferOverlay(),
 			this::updateScreenerFilters,
 			config.screenerMinPrice(),
 			config.screenerMaxPrice(),
@@ -189,6 +192,20 @@ public class MerchLensPlugin extends Plugin
 	}
 
 	@Subscribe
+	public void onConfigChanged(ConfigChanged event)
+	{
+		if (event == null || !"merchlens".equals(event.getGroup()) || !"showGeOfferOverlay".equals(event.getKey()))
+		{
+			return;
+		}
+		MerchLensPanel currentPanel = panel;
+		if (currentPanel != null)
+		{
+			currentPanel.setGeOfferOverlayVisible(config.showGeOfferOverlay());
+		}
+	}
+
+	@Subscribe
 	@SuppressWarnings("deprecation")
 	public void onMenuEntryAdded(MenuEntryAdded event)
 	{
@@ -204,16 +221,21 @@ public class MerchLensPlugin extends Plugin
 			return;
 		}
 
-		int itemId = type == MenuAction.EXAMINE_ITEM_GROUND ? event.getIdentifier() : event.getItemId();
-		if (itemId <= 0 && event.getMenuEntry().getWidget() != null)
+		int itemId = type == MenuAction.EXAMINE_ITEM_GROUND ? event.getIdentifier() : -1;
+		if (widgetItemExamine)
 		{
-			itemId = event.getMenuEntry().getWidget().getItemId();
-		}
-		if (itemId <= 0 && widgetItemExamine)
-		{
+			// Equipment examine entries can expose a nonzero container item ID, so resolve the slot first.
 			Widget container = client.getWidget(event.getActionParam1());
 			Widget item = container == null ? null : container.getChild(event.getActionParam0());
 			itemId = item == null ? itemId : item.getItemId();
+		}
+		if (itemId <= 0)
+		{
+			itemId = event.getItemId();
+		}
+		if (itemId <= 0 && event.getMenuEntry().getWidget() != null)
+		{
+			itemId = event.getMenuEntry().getWidget().getItemId();
 		}
 		if (itemId <= 0)
 		{
@@ -526,6 +548,11 @@ public class MerchLensPlugin extends Plugin
 	private void updateControlsCollapsed(boolean collapsed)
 	{
 		configManager.setConfiguration("merchlens", "controlsCollapsed", collapsed);
+	}
+
+	private void updateGeOfferOverlayVisible(boolean visible)
+	{
+		configManager.setConfiguration("merchlens", "showGeOfferOverlay", visible);
 	}
 
 	private void resetFlipLog(long since)

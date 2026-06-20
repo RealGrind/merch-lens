@@ -110,10 +110,12 @@ public class MerchLensPanel extends PluginPanel
 	private static final int PINNED_HELP_HEIGHT = 48;
 	private static final int CONTROL_HEIGHT = 24;
 	private static final int PAGE_ROW_HEIGHT = 33;
+	private static final int OVERLAY_TOGGLE_HEIGHT = 32;
 	private static final int FILTER_CONTROLS_HEIGHT = 58;
 	private static final int SCREENER_CONTROLS_HEIGHT = 208;
 	private static final int FLIP_LOG_CONTROLS_HEIGHT = 124;
 	private static final int SCREENER_PROGRESS_HEIGHT = 24;
+	private static final int FAVORITE_CONTROLS_HEIGHT = 62;
 	private static final int STAPLE_CONTROLS_HEIGHT = 92;
 	private static final int HEART_BUTTON_SIZE = 22;
 	private static final int CLEAR_BUTTON_SIZE = 22;
@@ -140,6 +142,7 @@ public class MerchLensPanel extends PluginPanel
 	private final Runnable screenerTrendCancelCallback;
 	private final LongConsumer flipLogResetCallback;
 	private final Consumer<Boolean> controlsCollapsedCallback;
+	private final Consumer<Boolean> geOfferOverlayVisibleCallback;
 	private final Consumer<ScreenerFilters> screenerFiltersCallback;
 	private final ItemManager itemManager;
 	private final JPanel pinnedContent = new JPanel();
@@ -172,6 +175,7 @@ public class MerchLensPanel extends PluginPanel
 	private int broaderPage;
 	private int flipLogPage;
 	private int stapleTypeIndex;
+	private int favoriteSortIndex;
 	private int stapleSortIndex;
 	private int screenerSortIndex;
 	private int flipLogTimeframeIndex;
@@ -180,6 +184,7 @@ public class MerchLensPanel extends PluginPanel
 	private boolean upToDatePricesOnly;
 	private boolean calculatorExpanded;
 	private boolean controlsCollapsed;
+	private boolean geOfferOverlayVisible;
 	private boolean pinnedAreaMinimized;
 	private boolean favoritesExpanded;
 	private boolean highVolumeExpanded = true;
@@ -287,6 +292,8 @@ public class MerchLensPanel extends PluginPanel
 		LongConsumer flipLogResetCallback,
 		Consumer<Boolean> controlsCollapsedCallback,
 		boolean controlsCollapsed,
+		Consumer<Boolean> geOfferOverlayVisibleCallback,
+		boolean geOfferOverlayVisible,
 		Consumer<ScreenerFilters> screenerFiltersCallback,
 		int screenerMinPrice,
 		int screenerMaxPrice,
@@ -306,6 +313,8 @@ public class MerchLensPanel extends PluginPanel
 		this.flipLogResetCallback = flipLogResetCallback;
 		this.controlsCollapsedCallback = controlsCollapsedCallback;
 		this.controlsCollapsed = controlsCollapsed;
+		this.geOfferOverlayVisibleCallback = geOfferOverlayVisibleCallback;
+		this.geOfferOverlayVisible = geOfferOverlayVisible;
 		this.screenerFiltersCallback = screenerFiltersCallback;
 		this.screenerMinPrice = Math.max(0, screenerMinPrice);
 		this.screenerMaxPrice = Math.max(0, screenerMaxPrice);
@@ -661,6 +670,7 @@ public class MerchLensPanel extends PluginPanel
 
 			List<RecommendationDto> favoriteCandidates = response.getFavoriteRecommendations();
 			List<RecommendationDto> favorites = applyRecommendationFilters(favoriteCandidates);
+			favorites.sort(marketComparator(favoriteSortIndex));
 			int favoriteMaxPage = Math.max(0, (favorites.size() - 1) / RECOMMENDATION_PAGE_SIZE);
 			favoritesPage = Math.min(favoritesPage, favoriteMaxPage);
 			List<RecommendationDto> stapleCandidates = filteredAndSortedStaples(response.getHighVolumeRecommendations());
@@ -864,6 +874,7 @@ public class MerchLensPanel extends PluginPanel
 		}
 		pinnedContent.add(searchPanel());
 		pinnedContent.add(utilityNav());
+		pinnedContent.add(overlayToggle());
 		if (calculatorExpanded)
 		{
 			pinnedContent.add(calculatorSection());
@@ -901,30 +912,7 @@ public class MerchLensPanel extends PluginPanel
 			{
 				pinnedContent.add(pinnedHeading("Favorites", "Saved items."));
 				pinnedContent.add(filterControls());
-				if (favoriteTotal > 0)
-				{
-					pinnedContent.add(paginationControls(
-						favoriteTotal,
-						favoriteMaxPage,
-						favoritesPage,
-						() -> {
-							int updatedPage = Math.max(0, favoritesPage - 1);
-							if (updatedPage != favoritesPage)
-							{
-								favoritesPage = updatedPage;
-								renderCurrentAtTop();
-							}
-						},
-						() -> {
-							int updatedPage = Math.min(favoriteMaxPage, favoritesPage + 1);
-							if (updatedPage != favoritesPage)
-							{
-								favoritesPage = updatedPage;
-								renderCurrentAtTop();
-							}
-						}
-					));
-				}
+				pinnedContent.add(favoriteControls(favoriteTotal, favoriteMaxPage));
 			}
 			else if (!controlsCollapsed && highVolumeExpanded)
 			{
@@ -1917,6 +1905,93 @@ public class MerchLensPanel extends PluginPanel
 		panel.add(sort);
 		panel.add(Box.createVerticalStrut(4));
 		panel.add(pageRow);
+		return panel;
+	}
+
+	private JPanel favoriteControls(int total, int maxPage)
+	{
+		JPanel panel = new JPanel();
+		panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+		panel.setOpaque(true);
+		panel.setBackground(PINNED_SURFACE);
+		panel.setBorder(BorderFactory.createEmptyBorder(3, 10, 7, 10));
+		panel.setAlignmentX(LEFT_ALIGNMENT);
+		fixedHeight(panel, FAVORITE_CONTROLS_HEIGHT);
+
+		JComboBox<String> sort = new JComboBox<>(MARKET_SORTS);
+		sort.setSelectedIndex(favoriteSortIndex);
+		stylePinnedCombo(sort, "Sort items by");
+		fixedSize(sort, CONTROL_WIDTH, CONTROL_HEIGHT);
+		sort.setAlignmentX(Component.CENTER_ALIGNMENT);
+		deferRendersWhileOpen(sort);
+		sort.addActionListener(event -> {
+			favoriteSortIndex = sort.getSelectedIndex();
+			favoritesPage = 0;
+			renderCurrentAtTop();
+		});
+
+		JButton previous = new PageArrowButton(false);
+		previous.setEnabled(favoritesPage > 0);
+		previous.addActionListener(event -> {
+			int updatedPage = Math.max(0, favoritesPage - 1);
+			if (updatedPage != favoritesPage)
+			{
+				favoritesPage = updatedPage;
+				renderCurrentAtTop();
+			}
+		});
+		JButton next = new PageArrowButton(true);
+		next.setEnabled(favoritesPage < maxPage);
+		next.addActionListener(event -> {
+			int updatedPage = Math.min(maxPage, favoritesPage + 1);
+			if (updatedPage != favoritesPage)
+			{
+				favoritesPage = updatedPage;
+				renderCurrentAtTop();
+			}
+		});
+		JLabel page = new JLabel((favoritesPage + 1) + "/" + (maxPage + 1) + " (" + total + ")");
+		page.setForeground(Color.LIGHT_GRAY);
+		page.setFont(BODY_FONT);
+		page.setHorizontalAlignment(JLabel.CENTER);
+
+		JPanel pageRow = centeredControlRow();
+		pageRow.add(previous, BorderLayout.WEST);
+		pageRow.add(page, BorderLayout.CENTER);
+		pageRow.add(next, BorderLayout.EAST);
+		panel.add(sort);
+		panel.add(Box.createVerticalStrut(4));
+		panel.add(pageRow);
+		return panel;
+	}
+
+	public void setGeOfferOverlayVisible(boolean visible)
+	{
+		SwingUtilities.invokeLater(() -> {
+			if (geOfferOverlayVisible == visible)
+			{
+				return;
+			}
+			geOfferOverlayVisible = visible;
+			renderCurrent();
+		});
+	}
+
+	private JPanel overlayToggle()
+	{
+		JPanel panel = new JPanel(new BorderLayout());
+		panel.setOpaque(true);
+		panel.setBackground(PINNED_SURFACE);
+		panel.setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 10));
+		panel.setAlignmentX(LEFT_ALIGNMENT);
+		fixedHeight(panel, OVERLAY_TOGGLE_HEIGHT);
+		panel.add(filterCheckbox("Show GE offer overlay", geOfferOverlayVisible, selected -> {
+			geOfferOverlayVisible = selected;
+			if (geOfferOverlayVisibleCallback != null)
+			{
+				geOfferOverlayVisibleCallback.accept(selected);
+			}
+		}), BorderLayout.CENTER);
 		return panel;
 	}
 
