@@ -27,7 +27,6 @@ import net.runelite.api.ItemComposition;
 import net.runelite.api.MenuAction;
 import net.runelite.api.events.GrandExchangeOfferChanged;
 import net.runelite.api.events.MenuEntryAdded;
-import net.runelite.api.widgets.Widget;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
@@ -220,19 +219,22 @@ public class MerchLensPlugin extends Plugin
 		{
 			return;
 		}
-
-		int itemId = type == MenuAction.EXAMINE_ITEM_GROUND ? event.getIdentifier() : -1;
 		if (widgetItemExamine)
 		{
-			// Equipment examine entries can expose a nonzero container item ID, so resolve the slot first.
-			Widget container = client.getWidget(event.getActionParam1());
-			Widget item = container == null ? null : container.getChild(event.getActionParam0());
-			itemId = item == null ? itemId : item.getItemId();
+			String lookupName = plainMenuTarget(event.getTarget());
+			if (lookupName.isEmpty())
+			{
+				return;
+			}
+			client.getMenu().createMenuEntry(-1)
+				.setOption(MENU_OPTION_MERCH)
+				.setTarget(event.getTarget())
+				.setType(MenuAction.RUNELITE)
+				.onClick(entry -> openLookupFromMenu(lookupName));
+			return;
 		}
-		if (itemId <= 0)
-		{
-			itemId = event.getItemId();
-		}
+
+		int itemId = type == MenuAction.EXAMINE_ITEM_GROUND ? event.getIdentifier() : event.getItemId();
 		if (itemId <= 0 && event.getMenuEntry().getWidget() != null)
 		{
 			itemId = event.getMenuEntry().getWidget().getItemId();
@@ -262,6 +264,11 @@ public class MerchLensPlugin extends Plugin
 			.onClick(entry -> openLookupFromMenu(lookupItemId, lookupName));
 	}
 
+	private String plainMenuTarget(String target)
+	{
+		return target == null ? "" : target.replaceAll("<[^>]+>", "").trim();
+	}
+
 	private void openLookupFromMenu(int itemId, String itemName)
 	{
 		SwingUtilities.invokeLater(() -> {
@@ -272,6 +279,19 @@ public class MerchLensPlugin extends Plugin
 			}
 			clientToolbar.openPanel(navigationButton);
 			currentPanel.lookupItem(itemId, itemName);
+		});
+	}
+
+	private void openLookupFromMenu(String itemName)
+	{
+		SwingUtilities.invokeLater(() -> {
+			MerchLensPanel currentPanel = panel;
+			if (currentPanel == null || navigationButton == null)
+			{
+				return;
+			}
+			clientToolbar.openPanel(navigationButton);
+			currentPanel.lookupItem(itemName);
 		});
 	}
 

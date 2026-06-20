@@ -606,13 +606,23 @@ public class MerchLensPanel extends PluginPanel
 
 	public void lookupItem(int itemId, String itemName)
 	{
+		lookupItem(Integer.toString(itemId), itemName);
+	}
+
+	public void lookupItem(String itemName)
+	{
+		lookupItem(itemName, itemName);
+	}
+
+	private void lookupItem(String query, String itemName)
+	{
 		SwingUtilities.invokeLater(() -> {
 			searchPopup.setVisible(false);
 			selectingSearchSuggestion = true;
-			searchField.setText(itemName == null ? Integer.toString(itemId) : itemName);
+			searchField.setText(itemName == null ? query : itemName);
 			selectingSearchSuggestion = false;
 			setSearchInlineMessage(null, Color.LIGHT_GRAY);
-			searchCallback.accept(Integer.toString(itemId));
+			searchCallback.accept(query);
 		});
 	}
 
@@ -873,8 +883,8 @@ public class MerchLensPanel extends PluginPanel
 			return;
 		}
 		pinnedContent.add(searchPanel());
-		pinnedContent.add(utilityNav());
 		pinnedContent.add(overlayToggle());
+		pinnedContent.add(utilityNav());
 		if (calculatorExpanded)
 		{
 			pinnedContent.add(calculatorSection());
