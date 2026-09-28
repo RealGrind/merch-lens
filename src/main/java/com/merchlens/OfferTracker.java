@@ -102,7 +102,7 @@ class OfferTracker
 		TrackedOffer tracked = activeOffers.get(slot);
 		boolean matchingOffer = tracked != null && tracked.matches(offer);
 		int previousQuantity = matchingOffer ? tracked.getFilledQuantity() : 0;
-		int previousSpent = matchingOffer ? tracked.getSpent() : 0;
+		long previousSpent = matchingOffer ? tracked.getSpent() : 0L;
 		boolean captureExistingProgress = matchingOffer;
 		if (tracked != null && tracked.matches(offer))
 		{
@@ -116,7 +116,7 @@ class OfferTracker
 		}
 		save();
 		int filledQuantity = offer.getQuantitySold() - previousQuantity;
-		long filledValue = (long) offer.getSpent() - previousSpent;
+		long filledValue = offer.getSpent() - previousSpent;
 		boolean captureNewOffer = !matchingOffer && tracked.isTrackedStartKnown();
 		if (filledQuantity <= 0 || filledValue < 0 || (!captureExistingProgress && !captureNewOffer))
 		{

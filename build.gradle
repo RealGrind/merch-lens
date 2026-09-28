@@ -5,6 +5,8 @@ plugins {
 group = "com.merchlens"
 version = "0.1.0"
 
+def runeLiteVersion = "latest.release"
+
 layout.buildDirectory = file("${gradle.gradleUserHomeDir}/project-builds/${rootProject.name}")
 
 java {
@@ -13,13 +15,13 @@ java {
 }
 
 dependencies {
-    compileOnly "net.runelite:client:1.12.26.3"
+    compileOnly "net.runelite:client:${runeLiteVersion}"
     compileOnly "org.projectlombok:lombok:1.18.32"
     annotationProcessor "org.projectlombok:lombok:1.18.32"
 
     testImplementation files(tasks.jar)
     testImplementation "junit:junit:4.13.2"
-    testImplementation "net.runelite:client:1.12.26.3"
+    testImplementation "net.runelite:client:${runeLiteVersion}"
 }
 
 tasks.withType(JavaCompile).configureEach {

@@ -6,10 +6,10 @@ class TrackedOffer
 {
 	private int slot;
 	private int itemId;
-	private int price;
+	private long price;
 	private int totalQuantity;
 	private int filledQuantity;
-	private int spent;
+	private long spent;
 	private String state;
 	private long firstSeenAt;
 	private long lastUpdatedAt;
@@ -37,7 +37,7 @@ class TrackedOffer
 		return itemId;
 	}
 
-	int getPrice()
+	long getPrice()
 	{
 		return price;
 	}
@@ -52,7 +52,7 @@ class TrackedOffer
 		return filledQuantity;
 	}
 
-	int getSpent()
+	long getSpent()
 	{
 		return spent;
 	}

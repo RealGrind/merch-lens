@@ -38,7 +38,7 @@ public class OfferTrackerTest
 
 		Assert.assertEquals(firstSeenAt, updated.getFirstSeenAt());
 		Assert.assertEquals(70, updated.getFilledQuantity());
-		Assert.assertEquals(7_000, updated.getSpent());
+		Assert.assertEquals(7_000L, updated.getSpent());
 	}
 
 	@Test
@@ -70,7 +70,21 @@ public class OfferTrackerTest
 		Assert.assertEquals(117_600, fill.getTotalValue());
 	}
 
-	private GrandExchangeOffer offer(GrandExchangeOfferState state, int itemId, int price, int totalQuantity, int filledQuantity, int spent)
+	@Test
+	public void tracksOfferValuesBeyondTheLegacyIntegerLimit()
+	{
+		OfferTracker tracker = new OfferTracker(null, new Gson());
+		tracker.record(1, offer(GrandExchangeOfferState.BUYING, 560, 3_000_000_000L, 2, 0, 0));
+
+		OfferFill fill = tracker.record(1, offer(GrandExchangeOfferState.BOUGHT, 560, 3_000_000_000L, 2, 1, 3_000_000_000L));
+
+		Assert.assertNotNull(fill);
+		Assert.assertEquals(3_000_000_000L, tracker.activeOffers().get(0).getPrice());
+		Assert.assertEquals(3_000_000_000L, tracker.activeOffers().get(0).getSpent());
+		Assert.assertEquals(3_000_000_000L, fill.getTotalValue());
+	}
+
+	private GrandExchangeOffer offer(GrandExchangeOfferState state, int itemId, long price, int totalQuantity, int filledQuantity, long spent)
 	{
 		return new StubOffer(state, itemId, price, totalQuantity, filledQuantity, spent);
 	}
@@ -79,12 +93,12 @@ public class OfferTrackerTest
 	{
 		private final GrandExchangeOfferState state;
 		private final int itemId;
-		private final int price;
+		private final long price;
 		private final int totalQuantity;
 		private final int filledQuantity;
-		private final int spent;
+		private final long spent;
 
-		StubOffer(GrandExchangeOfferState state, int itemId, int price, int totalQuantity, int filledQuantity, int spent)
+		StubOffer(GrandExchangeOfferState state, int itemId, long price, int totalQuantity, int filledQuantity, long spent)
 		{
 			this.state = state;
 			this.itemId = itemId;
@@ -113,13 +127,13 @@ public class OfferTrackerTest
 		}
 
 		@Override
-		public int getPrice()
+		public long getPrice()
 		{
 			return price;
 		}
 
 		@Override
-		public int getSpent()
+		public long getSpent()
 		{
 			return spent;
 		}
