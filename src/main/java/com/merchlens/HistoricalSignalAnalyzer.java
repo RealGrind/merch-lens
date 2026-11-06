@@ -32,7 +32,7 @@ class HistoricalSignalAnalyzer
 			return new HistoricalSignal(itemId, HistoricalSignal.MarketState.INSUFFICIENT_HISTORY, 0, 0, 0, 1, 0, 1, "Not enough 24h history.");
 		}
 
-		int currentMid = (currentLow + currentHigh) / 2;
+		int currentMid = (int) (((long) currentLow + currentHigh) / 2);
 		int median = median(mids);
 		int p10 = percentile(mids, 0.10);
 		int p90 = percentile(mids, 0.90);

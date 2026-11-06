@@ -2,14 +2,14 @@ package com.merchlens.model;
 
 public class LatestPrice
 {
-	private Integer high;
+	private Number high;
 	private Long highTime;
-	private Integer low;
+	private Number low;
 	private Long lowTime;
 
 	public Integer getHigh()
 	{
-		return high;
+		return PriceValue.asInt(high);
 	}
 
 	public Long getHighTime()
@@ -19,11 +19,16 @@ public class LatestPrice
 
 	public Integer getLow()
 	{
-		return low;
+		return PriceValue.asInt(low);
 	}
 
 	public Long getLowTime()
 	{
 		return lowTime;
+	}
+
+	public boolean hasUnsupportedPrice()
+	{
+		return (high != null && getHigh() == null) || (low != null && getLow() == null);
 	}
 }

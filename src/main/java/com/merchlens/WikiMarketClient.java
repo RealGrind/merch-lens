@@ -88,7 +88,8 @@ public class WikiMarketClient
 		for (Map.Entry<Integer, LatestPrice> entry : latest.getData().entrySet())
 		{
 			ItemMetadata metadata = mapping.get(entry.getKey());
-			if (metadata == null)
+			if (metadata == null || entry.getValue() == null
+				|| entry.getValue().getHigh() == null || entry.getValue().getLow() == null)
 			{
 				continue;
 			}
@@ -167,6 +168,10 @@ public class WikiMarketClient
 		LatestPrice latestPrice = latest.getData().get(metadata.getId());
 		if (latestPrice == null || latestPrice.getHigh() == null || latestPrice.getLow() == null)
 		{
+			if (latestPrice != null && latestPrice.hasUnsupportedPrice())
+			{
+				throw new IOException("Wiki price for " + metadata.getName() + " exceeds the plugin's 2,147,483,647 gp limit.");
+			}
 			throw new IOException("No recent Wiki price data for " + metadata.getName() + ".");
 		}
 

@@ -3,8 +3,8 @@ package com.merchlens.model;
 public class TimeseriesPoint
 {
 	private long timestamp;
-	private Integer avgHighPrice;
-	private Integer avgLowPrice;
+	private Number avgHighPrice;
+	private Number avgLowPrice;
 	private int highPriceVolume;
 	private int lowPriceVolume;
 
@@ -15,12 +15,12 @@ public class TimeseriesPoint
 
 	public Integer getAvgHighPrice()
 	{
-		return avgHighPrice;
+		return PriceValue.asInt(avgHighPrice);
 	}
 
 	public Integer getAvgLowPrice()
 	{
-		return avgLowPrice;
+		return PriceValue.asInt(avgLowPrice);
 	}
 
 	public int getHighPriceVolume()
@@ -40,16 +40,18 @@ public class TimeseriesPoint
 
 	public boolean hasPrices()
 	{
-		return avgHighPrice != null && avgLowPrice != null && avgHighPrice > 0 && avgLowPrice > 0;
+		Integer high = getAvgHighPrice();
+		Integer low = getAvgLowPrice();
+		return high != null && low != null && high > 0 && low > 0;
 	}
 
 	public int midpoint()
 	{
-		return (avgHighPrice + avgLowPrice) / 2;
+		return (int) (((long) getAvgHighPrice() + getAvgLowPrice()) / 2);
 	}
 
 	public int spread()
 	{
-		return Math.max(0, avgHighPrice - avgLowPrice);
+		return Math.max(0, getAvgHighPrice() - getAvgLowPrice());
 	}
 }

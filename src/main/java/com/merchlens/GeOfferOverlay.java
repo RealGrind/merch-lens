@@ -45,6 +45,7 @@ class GeOfferOverlay extends Overlay
 	private static final int COMPACT_ICON_SIZE = 22;
 	private static final int CANVAS_PADDING = 8;
 	private static final int MINIMAP_GAP = 8;
+	private static final int BANK_GAP = 8;
 	private static final int FIXED_HUD_FALLBACK_WIDTH = 215;
 	private static final int[] TOP_RIGHT_HUD_COMPONENTS = {
 		ComponentID.FIXED_VIEWPORT_MINIMAP,
@@ -93,6 +94,10 @@ class GeOfferOverlay extends Overlay
 		graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 		graphics.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
 		Layout layout = layout(offers.size());
+		if (layout == null)
+		{
+			return null;
+		}
 		for (int i = 0; i < offers.size(); i++)
 		{
 			int row = i / layout.columns;
@@ -108,6 +113,32 @@ class GeOfferOverlay extends Overlay
 
 	private Layout layout(int offerCount)
 	{
+		Rectangle bankBounds = bankBounds();
+		if (bankBounds != null)
+		{
+			int availableWidth = bankBounds.x - BANK_GAP - CANVAS_PADDING;
+			int availableHeight = client.getCanvasHeight() - CANVAS_PADDING;
+			if (availableWidth >= MIN_CARD_WIDTH)
+			{
+				Layout normal = layoutWithin(offerCount, availableWidth, MIN_CARD_WIDTH, MAX_CARD_WIDTH, CARD_HEIGHT, false);
+				if (normal.height <= availableHeight)
+				{
+					setPosition(OverlayPosition.TOP_LEFT);
+					return normal;
+				}
+			}
+			if (availableWidth >= MIN_COMPACT_CARD_WIDTH)
+			{
+				Layout compact = layoutWithin(offerCount, availableWidth, MIN_COMPACT_CARD_WIDTH, MAX_COMPACT_CARD_WIDTH, COMPACT_CARD_HEIGHT, true);
+				if (compact.height <= availableHeight)
+				{
+					setPosition(OverlayPosition.TOP_LEFT);
+					return compact;
+				}
+			}
+			return null;
+		}
+
 		int canvasWidth = Math.max(MIN_CARD_WIDTH, client.getCanvasWidth() - CANVAS_PADDING);
 		Layout normal = layoutWithin(offerCount, canvasWidth, MIN_CARD_WIDTH, MAX_CARD_WIDTH, CARD_HEIGHT, false);
 		Rectangle reservedHud = topRightHudBounds();
@@ -121,6 +152,17 @@ class GeOfferOverlay extends Overlay
 		int safeWidth = Math.max(MIN_COMPACT_CARD_WIDTH, reservedHud.x - CANVAS_PADDING - MINIMAP_GAP);
 		setPosition(OverlayPosition.TOP_LEFT);
 		return layoutWithin(offerCount, safeWidth, MIN_COMPACT_CARD_WIDTH, MAX_COMPACT_CARD_WIDTH, COMPACT_CARD_HEIGHT, true);
+	}
+
+	private Rectangle bankBounds()
+	{
+		Widget bank = client.getWidget(ComponentID.BANK_CONTAINER);
+		if (bank == null || bank.isHidden())
+		{
+			return null;
+		}
+		Rectangle bounds = bank.getBounds();
+		return bounds != null && bounds.width > 0 && bounds.height > 0 ? bounds : null;
 	}
 
 	private Layout layoutWithin(int offerCount, int availableWidth, int minCardWidth, int maxCardWidth, int cardHeight, boolean compact)

@@ -86,8 +86,8 @@ class RecommendationEngine
 		int netMargin = GeTax.netMargin(buyPrice, sellPrice, name);
 		double roi = buyPrice > 0 ? (double) netMargin / buyPrice : 0;
 		int quantity = Math.max(1, item.getMetadata().getLimit());
-		int expectedProfit = netMargin * quantity;
-		int capital = buyPrice * quantity;
+		int expectedProfit = clampedInt((long) netMargin * quantity);
+		int capital = clampedInt((long) buyPrice * quantity);
 		Map<String, Double> confidence = confidence(item, config, now, netMargin, roi, quantity, capital);
 		double confidenceScore = confidence.get("score");
 		double fillProbability = confidence.get("fillProbability");
@@ -333,9 +333,9 @@ class RecommendationEngine
 		{
 			return 0.45;
 		}
-		int liveSpread = Math.max(1, item.getLatestPrice().getHigh() - item.getLatestPrice().getLow());
-		int hourlySpread = Math.max(1, item.getOneHour().getAvgHighPrice() - item.getOneHour().getAvgLowPrice());
-		double expansion = Math.abs(liveSpread - hourlySpread) / (double) Math.max(hourlySpread, 1);
+		long liveSpread = Math.max(1L, (long) item.getLatestPrice().getHigh() - item.getLatestPrice().getLow());
+		long hourlySpread = Math.max(1L, (long) item.getOneHour().getAvgHighPrice() - item.getOneHour().getAvgLowPrice());
+		double expansion = Math.abs(liveSpread - hourlySpread) / (double) hourlySpread;
 		return Math.max(0.1, Math.min(1, 1 - expansion / 2));
 	}
 
@@ -345,9 +345,9 @@ class RecommendationEngine
 		{
 			return 0.35;
 		}
-		int currentMid = (item.getLatestPrice().getHigh() + item.getLatestPrice().getLow()) / 2;
-		int hourlyMid = (item.getOneHour().getAvgHighPrice() + item.getOneHour().getAvgLowPrice()) / 2;
-		double deviation = Math.abs(currentMid - hourlyMid) / (double) Math.max(hourlyMid, 1);
+		long currentMid = ((long) item.getLatestPrice().getHigh() + item.getLatestPrice().getLow()) / 2;
+		long hourlyMid = ((long) item.getOneHour().getAvgHighPrice() + item.getOneHour().getAvgLowPrice()) / 2;
+		double deviation = Math.abs(currentMid - hourlyMid) / (double) Math.max(hourlyMid, 1L);
 		return Math.max(0.2, Math.min(0.9, 1 - deviation / 0.08));
 	}
 

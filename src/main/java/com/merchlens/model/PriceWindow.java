@@ -2,14 +2,14 @@ package com.merchlens.model;
 
 public class PriceWindow
 {
-	private Integer avgHighPrice;
+	private Number avgHighPrice;
 	private int highPriceVolume;
-	private Integer avgLowPrice;
+	private Number avgLowPrice;
 	private int lowPriceVolume;
 
 	public Integer getAvgHighPrice()
 	{
-		return avgHighPrice;
+		return PriceValue.asInt(avgHighPrice);
 	}
 
 	public int getHighPriceVolume()
@@ -19,7 +19,7 @@ public class PriceWindow
 
 	public Integer getAvgLowPrice()
 	{
-		return avgLowPrice;
+		return PriceValue.asInt(avgLowPrice);
 	}
 
 	public int getLowPriceVolume()
